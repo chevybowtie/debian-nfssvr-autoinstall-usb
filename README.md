@@ -1,6 +1,6 @@
-# ubuntu-nfssvr-autoinstall-usb
+# debian-nfssvr-autoinstall-usb
 
-This project automates the creation of a bootable Ubuntu Server USB drive that performs a **fully unattended installation**. The installed system will act as a **backup server** with:
+This project automates the creation of a bootable Debian Server USB drive that performs a **fully unattended installation**. The installed system will act as a **backup server** with:
 
 - A static IP address (`192.168.99.1`)
 - An **NFS server** at `/srv/nfs`
@@ -11,27 +11,41 @@ This project automates the creation of a bootable Ubuntu Server USB drive that p
 
 ## 🔧 What This Script Does
 
-The `make-autoinstall-usb.sh` script:
+The `make-autoinstall-usb-debian-fat32-efi-clean.sh` script:
 
-1. Downloads the Ubuntu Server ISO
-2. Writes it to a USB drive
-3. Injects autoinstall configuration for:
+1. Downloads the Debian 12.11.0 netinst ISO
+2. Mounts and unpacks the ISO
+3. Injects preseed configuration:
    - Disk wipe + partitioning
    - Static IP
    - NFS and DHCP server installation
    - SSH key-based login
-4. Modifies GRUB to automatically trigger autoinstall
+4. Replaces the default GRUB configuration with a custom one to trigger autoinstall
+5. Writes the final ISO to a specified USB device
+
+---
+
+## ▶️ Running the Script
+
+You must run the script with root privileges:
+
+```bash
+sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh
+```
 
 ---
 
 ## 🚀 Using the USB Installer
 
 1. **Plug the USB drive into your mini PC**
-2. Boot from USB
-3. The installer will automatically configure everything
+2. Boot from USB (Legacy or UEFI)
+3. The installer will:
+   - Wipe the internal disk
+   - Install Debian 12.11.0 Server with your config
+   - Set up NFS and DHCP
 4. When finished, the mini PC will:
    - Have a user named `backupadmin`
-   - Be accessible via SSH if connected to the network
+   - Be accessible via SSH at `192.168.99.1`
    - Serve `/srv/nfs` over NFS
    - Provide DHCP to clients on the `192.168.99.0/24` subnet
 
@@ -39,67 +53,60 @@ The `make-autoinstall-usb.sh` script:
 
 ## 🖥️ How to Connect from a Client
 
-Assuming you have a second PC with a free NIC:
+Assuming the client has a second NIC:
 
 ### 📌 Option 1: Automatically via DHCP
 
-1. Connect the client PC to the mini PC with an Ethernet cable
+1. Connect an Ethernet cable from the client to the mini PC
 2. Set the NIC to use DHCP
-3. It should receive an IP in the range `192.168.99.10–20`
+3. Verify IP assignment:
 
-Check:
 ```bash
-ip a  # to confirm IP
+ip a  # Look for an address in 192.168.99.10–20
 ```
 
-Then:
+Then mount the NFS share:
+
 ```bash
 sudo mount 192.168.99.1:/srv/nfs /mnt
 ```
 
-To make it persistent, add this to `/etc/fstab`:
-```
+To make it persistent:
+
+```text
 192.168.99.1:/srv/nfs /mnt nfs defaults 0 0
 ```
 
----
+### 📌 Option 2: Static IP
 
-### 📌 Option 2: Manual IP Assignment
-
-If DHCP isn't working:
-
-1. Assign a static IP on the second PC (e.g., `192.168.99.2/24`)
-2. Then mount:
-```bash
-sudo mount 192.168.99.1:/srv/nfs /mnt
-```
+1. Set static IP on client NIC (e.g., `192.168.99.2/24`)
+2. Mount NFS as above
 
 ---
 
 ## 🔐 SSH Access
 
-To SSH into the server:
+If you added your SSH public key, connect like this:
 
 ```bash
 ssh backupadmin@192.168.99.1
 ```
 
-(Ensure your SSH public key was included in the autoinstall config.)
-
 ---
 
 ## ⚠️ Warning
 
-- This installation **wipes the entire disk** on the target mini PC.
-- Use caution and verify target disks before booting with this USB.
+- This script **wipes the internal drive** of the target machine.
+- Double-check your USB target (e.g., `/dev/sdX`) to avoid destroying data.
+- The current script defaults to `/dev/sdb` — modify this manually or enhance with a device picker (see TODO).
 
 ---
 
 ## 🧪 Tested On
 
-- Ubuntu Server 22.04.4 LTS ISO
-- USB boot via BIOS/UEFI
-- Headless mini PCs with 1 NIC or more
+- Debian 12.11.0 netinst ISO
+- GRUB-based UEFI and BIOS systems
+- Headless mini PCs with one or more NICs
 
 ---
 
@@ -108,3 +115,5 @@ ssh backupadmin@192.168.99.1
 - Add Borg or rsnapshot for scheduled backups
 - Export multiple NFS volumes
 - Add cron jobs or `rsync` hooks
+- Use `.env.secrets` to manage config separately
+- Add device picker to choose USB target interactively
