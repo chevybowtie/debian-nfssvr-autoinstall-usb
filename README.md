@@ -38,7 +38,7 @@ sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh
 ## 🚀 Using the USB Installer
 
 1. **Plug the USB drive into your mini PC**
-2. Boot from USB (Legacy or UEFI)
+2. Boot from USB (UEFI)
 3. The installer will:
    - Wipe the internal disk
    - Install Debian 12.11.0 Server with your config
@@ -97,15 +97,16 @@ ssh backupadmin@192.168.99.1
 ## ⚠️ Warning
 
 - This script **wipes the internal drive** of the target machine.
+- This script **wipes the USB drive** of the build machine
 - Double-check your USB target (e.g., `/dev/sdX`) to avoid destroying data.
-- The current script defaults to `/dev/sdb` — modify this manually or enhance with a device picker (see TODO).
+- The current script defaults to `/dev/sdb` 
 
 ---
 
 ## 🧪 Tested On
 
-- Debian 12.11.0 netinst ISO
-- GRUB-based UEFI and BIOS systems
+- Debian 12.11.0 ISO
+- GRUB-based UEFI systems
 - Headless mini PCs with one or more NICs
 
 ---
@@ -117,3 +118,6 @@ ssh backupadmin@192.168.99.1
 - Add cron jobs or `rsync` hooks
 - Use `.env.secrets` to manage config separately
 - Add device picker to choose USB target interactively
+- More precise partitioning 
+  - sdb1: \
+  - sdb2: nfs-share that could be expanded with LVM later across other additional disks
