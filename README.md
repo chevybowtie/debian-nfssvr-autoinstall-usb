@@ -29,8 +29,11 @@ Requirements
 - Target system boots in UEFI mode.
 
 Usage
-1) Identify the USB device (double-check):
-   - `lsblk` before/after plugging the stick (typically `/dev/sdb`).
+1) Detect the USB device:
+   - Use `--prompt` to automatically detect the USB device after inserting it:
+     - `sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh --prompt`
+   - Alternatively, identify the USB device manually:
+     - `lsblk` before/after plugging the stick (typically `/dev/sdb`).
 2) Write the USB (this will erase the device):
    - `sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh --usb-device /dev/sdX`
 3) Boot the target from this USB (UEFI) and choose:

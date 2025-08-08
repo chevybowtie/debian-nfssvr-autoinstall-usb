@@ -22,17 +22,41 @@ USB_DEVICE="/dev/sdb"   # override with --usb-device /dev/sdX
 MOUNT_USB="/mnt/usb"
 PRESEED_FILE="preseed.cfg"   # local preseed source
 GRUB_VERBOSE=false
+PROMPT_DEVICE=false
 
-usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose]"; exit 1; }
+usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose] [--prompt]"; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     --usb-device) USB_DEVICE="$2"; shift 2;;
     --grub-verbose) GRUB_VERBOSE=true; shift;;
+    --prompt) PROMPT_DEVICE=true; shift;;
     -h|--help) usage;;
     *) echo "Unknown option: $1"; usage;;
   esac
 done
+
+if $PROMPT_DEVICE; then
+  echo "Please insert the USB key and press Enter."
+  read -r
+  echo "Detecting USB device..."
+  before_devices=$(lsblk -dn -o NAME)
+  sleep 5
+  after_devices=$(lsblk -dn -o NAME)
+  new_device=$(comm -13 <(echo "$before_devices") <(echo "$after_devices"))
+  
+  if [[ -z $new_device ]]; then
+    echo "No new device detected via lsblk. Checking dmesg logs..."
+    new_device=$(dmesg | grep -Eo 'sd[a-z]' | tail -1)
+    if [[ -z $new_device ]]; then
+      echo "No new device detected. Aborting." >&2
+      exit 1
+    fi
+  fi
+
+  USB_DEVICE="/dev/$new_device"
+  echo "Detected USB device: $USB_DEVICE"
+fi
 
 # Required tools
 for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid rsync curl wget; do
