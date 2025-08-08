@@ -1,123 +1,64 @@
 # debian-nfssvr-autoinstall-usb
 
-This project automates the creation of a bootable Debian Server USB drive that performs a **fully unattended installation**. The installed system will act as a **backup server** with:
+Create a UEFI-bootable USB that performs an unattended Debian install and comes up as a small backup appliance:
 
-- A static IP address (`192.168.99.1`)
-- An **NFS server** at `/srv/nfs`
-- A **DHCP server** that assigns addresses in the range `192.168.99.10–20`
-- SSH enabled (via your provided public key)
+- Static IP: `192.168.99.1/24`
+- NFS export: `/srv/nfs`
+- Optional DHCP server: `192.168.99.10–20`
+- SSH enabled for user `backupadmin` (replace the key in `preseed.cfg`)
 
----
+Status
+- Debian: Working via the official hd-media method (no ISO remastering).
+- Ubuntu/Alpine attempts: Deprecated and no longer needed here.
 
-## 🔧 What This Script Does
+What the script does
+The script `make-autoinstall-usb-debian-fat32-efi-clean.sh`:
+- Partitions the USB as a single FAT32 ESP (UEFI bootable).
+- Downloads the Debian netinst ISO if missing and copies it unchanged to the USB root.
+- Downloads the hd-media installer kernel (`vmlinuz`) and `initrd.gz` and places them on the USB.
+- Copies your `preseed.cfg` to `/hd-media/preseed.cfg` on the USB.
+- Writes a minimal `grub.cfg` to boot Debian Installer with:
+  - `iso-scan/filename=<netinst.iso>` so d-i finds the ISO on the USB.
+  - keyboard and locale set to US to avoid prompts.
+  - preseed path to run unattended configuration and late setup (NFS/DHCP).
 
-The `make-autoinstall-usb-debian-fat32-efi-clean.sh` script:
+Requirements
+- Linux host, run as root (sudo).
+- Tools: `parted`, `grub-install` (grub-efi-amd64-bin), `mount`, `umount`, `udevadm`, `partprobe`, `wipefs`, `wget` or `curl`.
+- A USB drive that can be erased.
+- Target system boots in UEFI mode.
 
-1. Downloads the Debian 12.11.0 netinst ISO
-2. Mounts and unpacks the ISO
-3. Injects preseed configuration:
-   - Disk wipe + partitioning
-   - Static IP
-   - NFS and DHCP server installation
-   - SSH key-based login
-4. Replaces the default GRUB configuration with a custom one to trigger autoinstall
-5. Writes the final ISO to a specified USB device
+Usage
+1) Identify the USB device (double-check):
+   - `lsblk` before/after plugging the stick (typically `/dev/sdb`).
+2) Write the USB (this will erase the device):
+   - `sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh --usb-device /dev/sdX`
+3) Boot the target from this USB (UEFI) and choose:
+   - “Automated Debian NFS/DHCP Install”
 
----
+Default behavior
+- Keyboard: preset to US (no prompt).
+- Networking during install: static `192.168.99.1/24` (as in `preseed.cfg`).
+- Disk partitioning: by default the preseed is set up to automatically wipe and use the first disk.
+  - If you prefer being asked about partitioning, comment/remove the `partman-auto` lines in `preseed.cfg` (the ones that set method/recipe/confirm).
+- After first boot on the installed system:
+  - NFS server exports `/srv/nfs` to `192.168.99.0/24`.
+  - DHCP server (isc-dhcp-server) serves `192.168.99.10–20`.
+  - User `backupadmin` exists; SSH enabled. Replace the `authorized-keys` in `preseed.cfg`.
 
-## ▶️ Running the Script
+Verify after install
+- IP: `ip a` (expect `192.168.99.1/24`)
+- NFS: `systemctl status nfs-server` and `showmount -e 192.168.99.1`
+- DHCP: `systemctl status isc-dhcp-server`
 
-You must run the script with root privileges:
+Troubleshooting
+- Installer can’t find installation media (/cdrom):
+  - Ensure the ISO filename on the USB matches exactly `debian-12.11.0-amd64-netinst.iso`.
+  - This project uses the hd-media kernel/initrd and passes `iso-scan/filename` and `iso-scan/ask=false`.
+  - Some firmware/USB sticks need: add `modules=usb-storage,sd-mod,loop` to the kernel line.
+  - Prefer a USB2 port on quirky hardware.
+- Keyboard prompt appears: the GRUB entry forces US; regenerate the USB if you changed it.
+- Partitioning prompts: expected only if you trimmed `partman` lines in `preseed.cfg`.
 
-```bash
-sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh
-```
-
----
-
-## 🚀 Using the USB Installer
-
-1. **Plug the USB drive into your mini PC**
-2. Boot from USB (UEFI)
-3. The installer will:
-   - Wipe the internal disk
-   - Install Debian 12.11.0 Server with your config
-   - Set up NFS and DHCP
-4. When finished, the mini PC will:
-   - Have a user named `backupadmin`
-   - Be accessible via SSH at `192.168.99.1`
-   - Serve `/srv/nfs` over NFS
-   - Provide DHCP to clients on the `192.168.99.0/24` subnet
-
----
-
-## 🖥️ How to Connect from a Client
-
-Assuming the client has a second NIC:
-
-### 📌 Option 1: Automatically via DHCP
-
-1. Connect an Ethernet cable from the client to the mini PC
-2. Set the NIC to use DHCP
-3. Verify IP assignment:
-
-```bash
-ip a  # Look for an address in 192.168.99.10–20
-```
-
-Then mount the NFS share:
-
-```bash
-sudo mount 192.168.99.1:/srv/nfs /mnt
-```
-
-To make it persistent:
-
-```text
-192.168.99.1:/srv/nfs /mnt nfs defaults 0 0
-```
-
-### 📌 Option 2: Static IP
-
-1. Set static IP on client NIC (e.g., `192.168.99.2/24`)
-2. Mount NFS as above
-
----
-
-## 🔐 SSH Access
-
-If you added your SSH public key, connect like this:
-
-```bash
-ssh backupadmin@192.168.99.1
-```
-
----
-
-## ⚠️ Warning
-
-- This script **wipes the internal drive** of the target machine.
-- This script **wipes the USB drive** of the build machine
-- Double-check your USB target (e.g., `/dev/sdX`) to avoid destroying data.
-- The current script defaults to `/dev/sdb` 
-
----
-
-## 🧪 Tested On
-
-- Debian 12.11.0 ISO
-- GRUB-based UEFI systems
-- Headless mini PCs with one or more NICs
-
----
-
-## 💡 Future Ideas
-
-- Add Borg or rsnapshot for scheduled backups
-- Export multiple NFS volumes
-- Add cron jobs or `rsync` hooks
-- Use `.env.secrets` to manage config separately
-- Add device picker to choose USB target interactively
-- More precise partitioning 
-  - sdb1: \
-  - sdb2: nfs-share that could be expanded with LVM later across other additional disks
+Notes
+- Replace the placeholder SSH public key in `preseed.cfg` before use.
