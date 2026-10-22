@@ -11,46 +11,48 @@ Status
 
 - Debian: Working via the official hd-media method (no ISO remastering).
 - Ubuntu/Alpine attempts: Deprecated and no longer needed here.
+- Tested end to end in a UEFI VM (QEMU/OVMF): unattended install, switch to the fixed address, NFS write from a client with `all_squash`, SSH key login. **Not yet tested on real hardware:** a real PC receiving a DHCP lease from the server over the direct cable.
 
 What the script does
 
 The script `make-autoinstall-usb-debian-fat32-efi-clean.sh`:
 
 - Partitions the USB as a single FAT32 ESP (UEFI bootable).
-- Downloads the Debian netinst ISO if missing and copies it unchanged to the USB root.
-- Downloads the hd-media installer kernel (`vmlinuz`) and `initrd.gz` and places them on the USB.
+- Detects the current Debian netinst ISO (old point releases vanish from the mirror), downloads it if missing, verifies its checksum and GPG signature, and copies it unchanged to the USB root.
+- Downloads the hd-media installer kernel (`vmlinuz`) and `initrd.gz` into `cache/`, verifies them, checks their kernel matches the ISO's, and places them on the USB. All of this happens before anything is erased.
 - Copies the rendered `preseed.cfg`, `select-disk.sh` and `post-install.sh` to the top level of the USB (the installer mounts the stick at `/hd-media`, so `preseed/file=/hd-media/preseed.cfg` finds it).
 - Writes a minimal `grub.cfg` to boot Debian Installer with:
   - `iso-scan/filename=<netinst.iso>` so d-i finds the ISO on the USB.
-  - keyboard and locale set to US to avoid prompts.
+  - `LOCALE` and `KEYBOARD` from `.env` (default US) to avoid prompts.
   - preseed path to run unattended configuration and late setup (NFS/DHCP).
 
 Requirements
 
 - Linux host, run as root (sudo).
-- Tools: `parted`, `grub-install` (grub-efi-amd64-bin), `mount`, `umount`, `udevadm`, `partprobe`, `wipefs`, `curl`, `lsblk`, `sha256sum`, `envsubst`.
+- Tools: `parted`, `grub-install` (with the `grub-efi-amd64-bin` package), `mkfs.vfat`/`fsck.vfat` (dosfstools), `mount`, `umount`, `udevadm`, `partprobe`, `wipefs`, `blkid`, `lsblk`, `blockdev`, `dd`, `curl`, `sha256sum`, `envsubst`.
+- Recommended: `gpg` (verifies the ISO's signature), `xorriso` or `7z` plus `file` (kernel match check). If missing, the checks say so and either skip (kernel check) or stop (signature; `ALLOW_UNVERIFIED=true` overrides).
+- Internet access on the build machine (ISO and checksums) and, later, on the target during install.
 - A USB drive that can be erased.
 - Target system boots in UEFI mode.
-- SSH public key: auto-detected from your user's `~/.ssh/` (RSA or Ed25519), or set `SSH_KEY_FILE` in `.env`.
+- SSH public key: auto-detected from your user's `~/.ssh/` (Ed25519 preferred, then RSA), or set `SSH_KEY_FILE` in `.env`. Only the first line of the file is used.
 
 Usage
 
-1) Detect the USB device:
-   - Use `--prompt` to automatically detect the USB device after inserting it:
-     - `sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh --prompt`
-   - Alternatively, identify the USB device manually:
-     - `lsblk` before/after plugging the stick (typically `/dev/sdb`).
-2) Write the USB (this will erase the device):
+1) Copy `.env.example` to `.env` and set at least `USER_PASSWORD_HASH` (see Configuration).
+2) Write the USB (this erases the device):
    - `sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh --usb-device /dev/sdX`
+   - Or run it with no device (or with `--prompt`): it asks you to insert the stick and detects the one that appears.
+   - Safety checks: it refuses a device that is not a whole USB/removable disk, or that holds `/`, `/boot`, `/home`, `/usr`, `/var` or swap (`ALLOW_NON_USB=true` overrides the first check). It shows the device's model, size and mounts before asking you to type `yes`.
+   - Other options: `--env-file FILE` (use another config instead of `.env`), `--grub-verbose`.
 3) Boot the target from this USB (UEFI) and choose:
    - “Automated Debian NFS/DHCP Install (ERASES THE TARGET DISK)” (it also starts by itself after 10 s)
 
 Default behavior
 
-- Keyboard: preset to US (no prompt).
+- Keyboard and locale: from `KEYBOARD`/`LOCALE` in `.env` (default US), no prompts.
 - Networking during install: **DHCP** (plug the server into a normal router: it needs the internet to fetch packages). On the first boot after install it switches to the fixed `192.168.99.1/24`.
-- Disk partitioning: by default the preseed is set up to automatically wipe and use the first disk.
-  - If you prefer being asked about partitioning, comment/remove the `partman-auto` lines in `preseed.cfg` (the ones that set method/recipe/confirm).
+- Disk partitioning: the installer automatically wipes and uses one disk on the target machine: `TARGET_DISK` if you set it, otherwise the first disk that is not USB-attached and not the installer stick (`select-disk.sh`).
+  - If you prefer being asked about partitioning, comment/remove the `partman-auto` lines in `preseed.cfg.template` and rebuild the stick.
 - After first boot on the installed system:
   - NFS server exports `/srv/nfs` to `192.168.99.0/24`.
   - DHCP server (isc-dhcp-server) serves `192.168.99.10–20`.
@@ -59,8 +61,9 @@ Default behavior
 Verify after install
 
 - IP: `ip a` (expect `192.168.99.1/24`)
-- NFS: `systemctl status nfs-server` and `showmount -e 192.168.99.1`
+- NFS: `systemctl status nfs-server` and `showmount -e 192.168.99.1` (`showmount` needs NFSv3/`rpcbind`, so it fails with `NFS_V4_ONLY=true`; use `ss -tln | grep 2049` instead)
 - DHCP: `systemctl status isc-dhcp-server`
+- SSH: `ssh backupadmin@192.168.99.1` with your key
 
 Configuration
 
@@ -74,15 +77,17 @@ Configuration
   - Much cleaner and more maintainable than inline preseed late_command chains
   - Can be tested independently before USB creation
   - Runs inside the installer chroot (copied in by `late_command`), so it enables services but starts them only on a booted system; they come up on first boot
-  - Uses the interface the installer configured statically; the static IP itself comes from the preseed `netcfg/*` settings (Debian uses ifupdown, not netplan)
-- Key variables: `STATIC_IP`, `TARGET_HOSTNAME`, `TARGET_USERNAME`, `TIMEZONE`, `NFS_SUBNET`, `DHCP_RANGE_START`/`END`, `SSH_KEY_FILE`, `USER_PASSWORD_HASH`, and more
+  - Switches the server from the installer's DHCP lease to the fixed `STATIC_IP` for its real role (via `/etc/network/interfaces`, or systemd-networkd if ifupdown is absent; Debian does not use netplan). It takes effect on the next boot.
+  - Writes the NFS export and the DHCP configuration, and installs your SSH key for the new user
+- Key variables (all documented in `.env.example`): `STATIC_IP`, `NETMASK`, `TARGET_HOSTNAME`, `TARGET_USERNAME`, `TARGET_DISK`, `TIMEZONE`, `NFS_SUBNET`, `DHCP_RANGE_START`/`END`, `DHCP_SEND_GATEWAY`/`DHCP_SEND_DNS`, `SERVER_GATEWAY`, `EXTRA_PACKAGES`, `SSH_KEY_FILE`, `USER_PASSWORD_HASH`, and more
+- **Upgrading an old `.env`:** `HOSTNAME`/`USERNAME` were renamed to `TARGET_HOSTNAME`/`TARGET_USERNAME` (the script stops if the old names are still set, because bash owns `HOSTNAME`). `GATEWAY` is gone: the installer now uses DHCP, and the server's own default route is `SERVER_GATEWAY` (empty by default). A leftover `GATEWAY` prints a note and is ignored.
 
 Download validation and verification
 
 - The ISO is checked against Debian's `SHA256SUMS` and its GPG signature (Debian CD signing key); the hd-media kernel/initrd are checked against the installer `SHA256SUMS`
 - The hd-media kernel version must match the ISO's kernel, otherwise the installer can't find its modules (`ALLOW_KERNEL_MISMATCH=true` overrides)
 - Verification failures abort before anything is erased (`ALLOW_UNVERIFIED=true` skips an unreachable checksum/signature)
-- After USB creation, key files are verified: vmlinuz, initrd.gz, preseed.cfg, GRUB config, and bootloader
+- After USB creation, key files are verified: vmlinuz, initrd.gz, the ISO, preseed.cfg, select-disk.sh, post-install.sh, GRUB config, and bootloader
 - If verification fails, the script exits with an error
 
 Troubleshooting
@@ -93,14 +98,18 @@ Troubleshooting
   - Some firmware/USB sticks need: add `modules=usb-storage,sd-mod,loop` to the kernel line.
   - Prefer a USB2 port on quirky hardware.
 - Keyboard prompt appears: the GRUB entry uses `LOCALE`/`KEYBOARD` from `.env`; regenerate the USB if you changed them.
-- Partitioning prompts: expected only if you trimmed `partman` lines in `preseed.cfg`.
+- Partitioning prompts: expected only if you trimmed `partman` lines in `preseed.cfg.template`.
+- Installer stalls on the network step: the server needs a DHCP server (your router) during install, and a working internet connection for the package download.
+- Installer reports an error at partitioning: `select-disk.sh` found no suitable non-USB disk. Set `TARGET_DISK` in `.env`.
+- Something fails late in the install: press `Alt+F4` in the installer for its log (look for lines tagged `select-disk` and `late_command`). A failing `post-install.sh` stops the install with an error rather than hiding it.
+- The stick won't boot: Secure Boot must be off (the GRUB on the stick is unsigned) and the machine must boot in UEFI mode.
 - Download failed after retries: check your internet connection and mirror accessibility.
 - Verification failed: the USB may have been disconnected or corrupted during setup.
 
 Notes
 
 - All configuration (hostname, network, NFS, DHCP, SSH key, password) is templated from `.env` into `preseed.cfg.template`
-- The generated `preseed.cfg` is written only to the USB and is never committed to git
+- The rendered `preseed.cfg` is written only to the USB. (The `preseed.cfg` tracked in the repo root is an old leftover that the script does not use; it contains an outdated example password hash and should not be reused.)
 - To update settings, edit `.env` and create a new USB — the preseed is regenerated each time
 - Password hash: generate with `openssl passwd -6` (prompts for the password, so it stays out of shell history) and set as `USER_PASSWORD_HASH='$6$...'` in `.env` (single quotes required)
 
