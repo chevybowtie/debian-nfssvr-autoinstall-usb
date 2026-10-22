@@ -27,11 +27,12 @@ fi
 ISO_FILE="${ISO_FILE:-}"  # Leave empty to auto-detect the current netinst ISO
 DEBIAN_RELEASE="${DEBIAN_RELEASE:-trixie}"
 HDMEDIA_BASE="${HDMEDIA_BASE:-https://deb.debian.org/debian/dists/${DEBIAN_RELEASE}/main/installer-amd64/current/images/hd-media}"
-USB_DEVICE="${USB_DEVICE:-/dev/sdb}"
+USB_DEVICE="${USB_DEVICE:-}"  # No default: pass --usb-device or let the script detect the inserted stick
 MOUNT_USB="${MOUNT_USB:-/mnt/usb}"
 SSH_KEY_FILE="${SSH_KEY_FILE:-$ORIGINAL_HOME/.ssh/id_rsa.pub}"
 GRUB_VERBOSE="${GRUB_VERBOSE:-false}"
-PROMPT_DEVICE="${PROMPT_DEVICE:-true}"
+PROMPT_DEVICE="${PROMPT_DEVICE:-}"  # empty = prompt only when no USB_DEVICE was given
+ALLOW_NON_USB="${ALLOW_NON_USB:-false}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 
 # Preseed template variables (with defaults)
@@ -56,6 +57,8 @@ DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
 DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
 
 usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose] [--prompt]"; exit 1; }
+
+die() { echo "Error: $*" >&2; exit 1; }
 
 # Download a file with retries
 download_with_retry() {
@@ -176,9 +179,32 @@ verify_usb_contents() {
   return 0
 }
 
+# Refuse targets that are not a whole removable/USB disk or that hold the running system
+check_target_device() {
+  local dev=$1 type tran removable mp
+
+  [[ -b $dev ]] || die "$dev is not a block device"
+
+  type=$(lsblk -dno TYPE "$dev" | tr -d ' ')
+  [[ $type == disk ]] || die "$dev is a '$type', not a whole disk (use e.g. /dev/sdb, not /dev/sdb1)"
+
+  tran=$(lsblk -dno TRAN "$dev" 2>/dev/null | tr -d ' ' || true)
+  removable=$(lsblk -dno RM "$dev" 2>/dev/null | tr -d ' ' || true)
+  if [[ $tran != usb && $removable != 1 && $ALLOW_NON_USB != true ]]; then
+    die "$dev does not look like a USB/removable disk (TRAN='${tran:-?}', RM='${removable:-?}'). Set ALLOW_NON_USB=true to override."
+  fi
+
+  while read -r mp; do
+    case $mp in
+      /|/boot|/boot/*|/home|/usr|/var|"[SWAP]")
+        die "$dev holds a system mount ($mp); refusing to erase it" ;;
+    esac
+  done < <(lsblk -nro MOUNTPOINT "$dev")
+}
+
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --usb-device) USB_DEVICE="$2"; shift 2;;
+    --usb-device) [[ $# -ge 2 ]] || usage; USB_DEVICE="$2"; PROMPT_DEVICE=false; shift 2;;
     --grub-verbose) GRUB_VERBOSE=true; shift;;
     --prompt) PROMPT_DEVICE=true; shift;;
     -h|--help) usage;;
@@ -186,30 +212,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if $PROMPT_DEVICE; then
-  echo "Please insert the USB key and press Enter."
-  read -r
-  echo "Detecting USB device..."
-  before_devices=$(lsblk -dn -o NAME)
-  sleep 5
-  after_devices=$(lsblk -dn -o NAME)
-  new_device=$(comm -13 <(echo "$before_devices") <(echo "$after_devices"))
-  
-  if [[ -z $new_device ]]; then
-    echo "No new device detected via lsblk. Checking dmesg logs..."
-    new_device=$(dmesg | grep -Eo 'sd[a-z]' | tail -1)
-    if [[ -z $new_device ]]; then
-      echo "No new device detected. Aborting." >&2
-      exit 1
-    fi
-  fi
-
-  USB_DEVICE="/dev/$new_device"
-  echo "Detected USB device: $USB_DEVICE"
-fi
-
 # Required tools
-for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid rsync curl wget envsubst; do
+for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid curl envsubst lsblk comm dd blockdev fsck.vfat sha256sum; do
   command -v $cmd >/dev/null 2>&1 || { echo "Missing required tool: $cmd" >&2; exit 1; }
 done
 
@@ -218,6 +222,41 @@ if [[ $EUID -ne 0 ]]; then
   echo "Run as root (sudo)." >&2
   exit 1
 fi
+
+if [[ -z $PROMPT_DEVICE ]]; then
+  if [[ -n $USB_DEVICE ]]; then PROMPT_DEVICE=false; else PROMPT_DEVICE=true; fi
+fi
+
+if [[ $PROMPT_DEVICE == true ]]; then
+  # Snapshot BEFORE the stick goes in, so the diff identifies it
+  before_devices=$(lsblk -dn -o NAME | sort)
+  echo "Please insert the USB key and press Enter."
+  read -r
+  echo "Detecting USB device..."
+
+  new_devices=""
+  for _ in {1..15}; do
+    sleep 1
+    after_devices=$(lsblk -dn -o NAME | sort)
+    new_devices=$(comm -13 <(echo "$before_devices") <(echo "$after_devices"))
+    [[ -n $new_devices ]] && break
+  done
+
+  if [[ -z $new_devices ]]; then
+    die "No new device detected. Re-run with --usb-device /dev/sdX"
+  fi
+  if [[ $(wc -l <<<"$new_devices") -gt 1 ]]; then
+    echo "Multiple new devices appeared:" >&2
+    echo "$new_devices" | sed 's|^|  /dev/|' >&2
+    die "Ambiguous; re-run with --usb-device /dev/sdX"
+  fi
+
+  USB_DEVICE="/dev/$new_devices"
+  echo "Detected USB device: $USB_DEVICE"
+fi
+
+[[ -n $USB_DEVICE ]] || die "No USB device specified"
+check_target_device "$USB_DEVICE"
 
 # Validate preseed template exists
 PRESEED_TEMPLATE="preseed.cfg.template"
@@ -290,7 +329,10 @@ else
   echo "Using existing ISO: $ISO_FILE"
 fi
 
-read -rp "This will ERASE ALL DATA on $USB_DEVICE. Continue? (yes/NO) " confirm
+echo ""
+lsblk -o NAME,SIZE,MODEL,TRAN,FSTYPE,LABEL,MOUNTPOINT "$USB_DEVICE"
+echo ""
+read -rp "This will ERASE ALL DATA on $USB_DEVICE (shown above). Continue? (yes/NO) " confirm
 [[ $confirm == "yes" ]] || { echo "Aborted."; exit 1; }
 
 # Unmount anything mounted
