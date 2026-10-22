@@ -8,7 +8,8 @@ set -euo pipefail
 #  2. Downloads the Debian netinst ISO if missing (kept untouched)
 #  3. Downloads hd-media vmlinuz + initrd.gz and places them on the USB
 #  4. Copies the untouched ISO file onto the USB root
-#  5. Places preseed.cfg at /hd-media/preseed.cfg
+#  5. Places preseed.cfg (and its helper scripts) in the USB top level; the
+#     installer mounts the stick at /hd-media, so it reads /hd-media/preseed.cfg
 #  6. Installs GRUB (UEFI removable) and adds an entry with iso-scan + preseed
 # Result: Fully automated install with late_command configuring NFS/DHCP.
 
@@ -248,9 +249,9 @@ verify_usb_contents() {
     "vmlinuz"
     "initrd.gz"
     "$ISO_FILE"
-    "hd-media/preseed.cfg"
-    "hd-media/post-install.sh"
-    "hd-media/select-disk.sh"
+    "preseed.cfg"
+    "post-install.sh"
+    "select-disk.sh"
     "boot/grub/grub.cfg"
     "EFI/BOOT/BOOTX64.EFI"
   )
@@ -528,9 +529,8 @@ cp "$HDMEDIA_CACHE/initrd.gz" "$MOUNT_USB/initrd.gz"
 # Copy whole ISO to root (untouched) so iso-scan can find it
 cp "$ISO_FILE" "$MOUNT_USB/$ISO_FILE"
 
-# Template and place preseed in /hd-media
-mkdir -p "$MOUNT_USB/hd-media"
-
+# The installer mounts the stick at /hd-media, so files in the USB top level
+# appear as /hd-media/<file> (Debian's documented preseed/file location)
 # Variables substituted into the template (an explicit list keeps envsubst from
 # blanking any other $word that appears in the preseed)
 TEMPLATE_VARS=(
@@ -542,23 +542,19 @@ TEMPLATE_VARS=(
 export "${TEMPLATE_VARS[@]}"
 
 # Template preseed.cfg and write to USB
-envsubst "$(printf '${%s} ' "${TEMPLATE_VARS[@]}")" < "$PRESEED_TEMPLATE" > "$MOUNT_USB/hd-media/preseed.cfg"
-if grep -qE '\$\{[A-Za-z_]+\}' "$MOUNT_USB/hd-media/preseed.cfg"; then
+envsubst "$(printf '${%s} ' "${TEMPLATE_VARS[@]}")" < "$PRESEED_TEMPLATE" > "$MOUNT_USB/preseed.cfg"
+if grep -qE '\$\{[A-Za-z_]+\}' "$MOUNT_USB/preseed.cfg"; then
   echo "Error: unsubstituted variables remain in preseed.cfg:" >&2
-  grep -nE '\$\{[A-Za-z_]+\}' "$MOUNT_USB/hd-media/preseed.cfg" >&2
+  grep -nE '\$\{[A-Za-z_]+\}' "$MOUNT_USB/preseed.cfg" >&2
   exit 1
 fi
 
 # Disk-selection helper (called from preseed early_command)
-cp select-disk.sh "$MOUNT_USB/hd-media/select-disk.sh"
+cp select-disk.sh "$MOUNT_USB/select-disk.sh"
 
 # Copy post-install script to USB (called from preseed late_command)
-if [[ -f post-install.sh ]]; then
-  cp post-install.sh "$MOUNT_USB/hd-media/post-install.sh"
-  chmod +x "$MOUNT_USB/hd-media/post-install.sh"
-else
-  echo "Warning: post-install.sh not found; NFS/DHCP setup may fail" >&2
-fi
+[[ -f post-install.sh ]] || die "post-install.sh not found; the installer's late_command would fail"
+cp post-install.sh "$MOUNT_USB/post-install.sh"
 
 # Create minimal GRUB config
 mkdir -p "$MOUNT_USB/boot/grub"

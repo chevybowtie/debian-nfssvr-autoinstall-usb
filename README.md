@@ -19,7 +19,7 @@ The script `make-autoinstall-usb-debian-fat32-efi-clean.sh`:
 - Partitions the USB as a single FAT32 ESP (UEFI bootable).
 - Downloads the Debian netinst ISO if missing and copies it unchanged to the USB root.
 - Downloads the hd-media installer kernel (`vmlinuz`) and `initrd.gz` and places them on the USB.
-- Copies your `preseed.cfg` to `/hd-media/preseed.cfg` on the USB.
+- Copies the rendered `preseed.cfg`, `select-disk.sh` and `post-install.sh` to the top level of the USB (the installer mounts the stick at `/hd-media`, so `preseed/file=/hd-media/preseed.cfg` finds it).
 - Writes a minimal `grub.cfg` to boot Debian Installer with:
   - `iso-scan/filename=<netinst.iso>` so d-i finds the ISO on the USB.
   - keyboard and locale set to US to avoid prompts.
