@@ -198,6 +198,20 @@ iso_kernel_version() {
   echo "$ver"
 }
 
+# Path of partition N on a disk: /dev/sdb -> /dev/sdb1, /dev/nvme0n1 -> /dev/nvme0n1p1
+part_path() {
+  local dev=$1 n=$2
+  if [[ $dev =~ [0-9]$ ]]; then echo "${dev}p${n}"; else echo "${dev}${n}"; fi
+}
+
+# Unmount every mounted partition of a disk (desktop automounters remount new partitions)
+unmount_partitions() {
+  local p
+  while read -r p; do
+    umount "$p" 2>/dev/null || true
+  done < <(lsblk -lnpo NAME "$1" | tail -n +2)
+}
+
 # Verify USB was created successfully
 verify_usb_contents() {
   local usb_dev=$1
@@ -206,7 +220,7 @@ verify_usb_contents() {
 
   # Remount USB for verification
   mkdir -p "$MOUNT_USB"
-  if ! mount ${usb_dev}1 "$MOUNT_USB" 2>/dev/null; then
+  if ! mount "$(part_path "$usb_dev" 1)" "$MOUNT_USB" 2>/dev/null; then
     echo "⚠ Could not remount USB for verification (may be in use)" >&2
     return 0
   fi
@@ -235,7 +249,7 @@ verify_usb_contents() {
   done
 
   # Verify filesystem integrity
-  if fsck.vfat -n "$usb_dev"1 &>/dev/null; then
+  if fsck.vfat -n "$(part_path "$usb_dev" 1)" &>/dev/null; then
     echo "✓ Filesystem integrity OK"
   else
     echo "⚠ Filesystem check inconclusive (may still be OK)" >&2
@@ -330,6 +344,8 @@ if [[ $PROMPT_DEVICE == true ]]; then
 fi
 
 [[ -n $USB_DEVICE ]] || die "No USB device specified"
+# Resolve symlinks (e.g. /dev/disk/by-id/...) so partition names can be derived
+USB_DEVICE=$(readlink -f "$USB_DEVICE")
 check_target_device "$USB_DEVICE"
 
 # Validate preseed template exists
@@ -451,7 +467,7 @@ read -rp "This will ERASE ALL DATA on $USB_DEVICE (shown above). Continue? (yes/
 [[ $confirm == "yes" ]] || { echo "Aborted."; exit 1; }
 
 # Unmount anything mounted
-umount ${USB_DEVICE}?* 2>/dev/null || true
+unmount_partitions "$USB_DEVICE"
 
 echo "Wiping partition table signatures..."
 wipefs --all "$USB_DEVICE"
@@ -471,13 +487,18 @@ parted --script "$USB_DEVICE" \
 partprobe "$USB_DEVICE"; udevadm settle
 
 # Wait for partition node
-for i in {1..10}; do [[ -b ${USB_DEVICE}1 ]] && break; sleep 1; done
-[[ -b ${USB_DEVICE}1 ]] || { echo "Partition ${USB_DEVICE}1 not found" >&2; exit 1; }
+USB_PART=$(part_path "$USB_DEVICE" 1)
+for i in {1..10}; do [[ -b $USB_PART ]] && break; sleep 1; done
+[[ -b $USB_PART ]] || { echo "Partition $USB_PART not found" >&2; exit 1; }
 
-mkfs.vfat -F32 -n NFSSVR_BOOT "${USB_DEVICE}1"
+# A desktop automounter may have mounted the fresh partition; mkfs refuses a mounted one
+unmount_partitions "$USB_DEVICE"
+mkfs.vfat -F32 -n NFSSVR_BOOT "$USB_PART"
+udevadm settle
+unmount_partitions "$USB_DEVICE"
 
 mkdir -p "$MOUNT_USB"
-mount ${USB_DEVICE}1 "$MOUNT_USB"
+mount "$USB_PART" "$MOUNT_USB"
 
 # Place the verified hd-media kernel and initrd on the USB
 cp "$HDMEDIA_CACHE/vmlinuz" "$MOUNT_USB/vmlinuz"
