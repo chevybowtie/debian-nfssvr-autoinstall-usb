@@ -562,21 +562,22 @@ cp post-install.sh "$MOUNT_USB/post-install.sh"
 # Create minimal GRUB config
 mkdir -p "$MOUNT_USB/boot/grub"
 cat > "$MOUNT_USB/boot/grub/grub.cfg" <<EOF
-timeout=3
+# Unattended: after the timeout this ERASES the target machine's install disk
+timeout=10
 default=0
 
-menuentry 'Automated Debian NFS/DHCP Install' {
+menuentry 'Automated Debian NFS/DHCP Install (ERASES THE TARGET DISK)' {
     insmod part_gpt
     insmod fat
-    linux /vmlinuz auto=true priority=critical locale=en_US.UTF-8 \\
-        debian-installer/locale=en_US.UTF-8 \\
-        console-setup/ask_detect=false console-setup/layoutcode=us \\
-        keyboard-configuration/xkb-keymap=us \\
+    linux /vmlinuz auto=true priority=critical locale=$LOCALE \\
+        debian-installer/locale=$LOCALE \\
+        console-setup/ask_detect=false console-setup/layoutcode=$KEYBOARD \\
+        keyboard-configuration/xkb-keymap=$KEYBOARD \\
         preseed/file=/hd-media/preseed.cfg \\
         iso-scan/filename=$ISO_FILE iso-scan/ask=false \\
         iso-scan/scan-all=true cdrom-detect/try-usb=true \\
         netcfg/choose_interface=auto rootdelay=5 \\
-        fb=false debian-installer=en_US \\
+        fb=false debian-installer=$LOCALE \\
         quiet
     initrd /initrd.gz
 }

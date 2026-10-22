@@ -74,6 +74,10 @@ d-i preseed/early_command string \
 d-i partman/early_command string \
   sh /hd-media/select-disk.sh "${TARGET_DISK}"
 
+# Power off instead of rebooting: the stick is still plugged in and its menu
+# auto-selects the installer, so a reboot would start (and wipe) the install again.
+# Remove the stick, then power the server on.
+d-i debian-installer/exit/poweroff boolean true
 d-i finish-install/reboot_in_progress note
 
 # Late command: run the post-install setup script inside the new system.
