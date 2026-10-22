@@ -2,6 +2,7 @@
 # Post-installation setup for NFS/DHCP server
 # Runs in-target (chroot of the new system) at the end of the Debian install, so
 # systemd is NOT running: services are enabled here and start on first boot.
+# The server's own address switches from the installer's DHCP lease to STATIC_IP on the next boot.
 # When run on an already-booted system, services are also (re)started.
 # Called from preseed late_command with environment variables
 
@@ -12,8 +13,10 @@ NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
 NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"
 STATIC_IP="${STATIC_IP:-192.168.99.1}"
 NETMASK="${NETMASK:-255.255.255.0}"
-GATEWAY="${GATEWAY:-192.168.99.254}"
+SERVER_GATEWAY="${SERVER_GATEWAY:-}"           # empty = no default route (direct-cable use)
 NAMESERVERS="${NAMESERVERS:-8.8.8.8}"
+DHCP_SEND_GATEWAY="${DHCP_SEND_GATEWAY:-false}"  # true = tell clients to route via this server
+DHCP_SEND_DNS="${DHCP_SEND_DNS:-false}"          # true = hand NAMESERVERS to clients
 DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
 DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
 
@@ -38,10 +41,10 @@ fi
 # True when systemd is actually running (false inside the installer chroot)
 systemd_running() { [[ -d /run/systemd/system ]]; }
 
-# Interface to serve DHCP on: the one d-i configured statically, else the first physical NIC
+# Interface to serve on: the one d-i configured (DHCP during install), else the first physical NIC
 detect_interface() {
   local iface n
-  iface=$(awk '$1=="iface" && $3=="inet" && $4=="static" {print $2; exit}' /etc/network/interfaces 2>/dev/null || true)
+  iface=$(awk '$1=="iface" && $2!="lo" {print $2; exit}' /etc/network/interfaces 2>/dev/null || true)
   if [[ -z "$iface" ]]; then
     for n in /sys/class/net/*; do
       if [[ -e "$n/device" ]]; then iface=${n##*/}; break; fi
@@ -90,22 +93,43 @@ for ((i=0; i<4; i++)); do
   fi
 done
 
-# dhcpd wants a comma-separated list: "8.8.8.8 1.1.1.1" -> "8.8.8.8, 1.1.1.1"
-NAMESERVERS_CSV=$(echo $NAMESERVERS | sed 's/  */, /g')
+# Optional options. Off by default: on a direct cable this server has no route
+# anywhere, and handing out a default route/DNS could hijack the client's
+# internet traffic (e.g. over Wi-Fi) while the cable is plugged in.
+dhcp_options=""
+if [[ "$DHCP_SEND_GATEWAY" == "true" ]]; then
+  dhcp_options+="  option routers $STATIC_IP;"$'\n'
+fi
+if [[ "$DHCP_SEND_DNS" == "true" ]]; then
+  # dhcpd wants a comma-separated list: "8.8.8.8 1.1.1.1" -> "8.8.8.8, 1.1.1.1"
+  NAMESERVERS_CSV=$(echo $NAMESERVERS | sed 's/  */, /g')
+  dhcp_options+="  option domain-name-servers $NAMESERVERS_CSV;"$'\n'
+fi
 
 # Write DHCP configuration
 cat > /etc/dhcp/dhcpd.conf <<EOF
+authoritative;
 subnet $network_addr netmask $NETMASK {
   range $DHCP_RANGE_START $DHCP_RANGE_END;
-  option routers $STATIC_IP;
-  option domain-name-servers $NAMESERVERS_CSV;
-  default-lease-time 600;
+${dhcp_options}  default-lease-time 600;
   max-lease-time 7200;
 }
 EOF
 
 # Configure interface for DHCP server
 echo "INTERFACESv4=\"$IFACE\"" > /etc/default/isc-dhcp-server
+
+# With no cable at boot the interface may not be ready when dhcpd starts; retry
+# instead of staying down until someone restarts it.
+mkdir -p /etc/systemd/system/isc-dhcp-server.service.d
+cat > /etc/systemd/system/isc-dhcp-server.service.d/retry.conf <<EOF
+[Unit]
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=5
+EOF
 
 # Enable DHCP; start it only on a booted system
 systemctl enable isc-dhcp-server
@@ -115,12 +139,51 @@ fi
 echo "✓ DHCP server configured"
 
 # ===== Static IP =====
-# Debian uses ifupdown, not netplan. The installer's netcfg (preseed
-# netcfg/get_ipaddress etc.) already wrote the static address to
-# /etc/network/interfaces, so nothing is configured here; just sanity-check it.
-if ! grep -qE "^iface +$IFACE +inet +static" /etc/network/interfaces 2>/dev/null; then
-  echo "Warning: no static config for $IFACE in /etc/network/interfaces;" >&2
-  echo "         the DHCP server needs $STATIC_IP on that interface." >&2
+# The installer got its address by DHCP (it needs the internet to fetch
+# packages). For its real job the server uses a fixed address on the cable to
+# the client PC. Takes effect on the next boot.
+netmask_to_cidr() {
+  local o b cidr=0
+  for o in ${1//./ }; do
+    for ((b = 7; b >= 0; b--)); do
+      if (( (o >> b) & 1 )); then cidr=$((cidr + 1)); fi
+    done
+  done
+  echo "$cidr"
+}
+CIDR=$(netmask_to_cidr "$NETMASK")
+
+if dpkg -s ifupdown >/dev/null 2>&1; then
+  # Debian's default for non-desktop installs; replaces the DHCP stanza d-i wrote.
+  # 'auto' (not allow-hotplug) so the address is set even when no cable is attached.
+  {
+    echo "# Written by post-install.sh: fixed address for the NFS/DHCP server role"
+    echo "source /etc/network/interfaces.d/*"
+    echo ""
+    echo "auto lo"
+    echo "iface lo inet loopback"
+    echo ""
+    echo "auto $IFACE"
+    echo "iface $IFACE inet static"
+    echo "    address $STATIC_IP"
+    echo "    netmask $NETMASK"
+    if [[ -n "$SERVER_GATEWAY" ]]; then echo "    gateway $SERVER_GATEWAY"; fi
+  } > /etc/network/interfaces
+  echo "✓ Static $STATIC_IP/$CIDR on $IFACE via /etc/network/interfaces"
+else
+  # No ifupdown: use systemd-networkd
+  mkdir -p /etc/systemd/network
+  {
+    echo "[Match]"
+    echo "Name=$IFACE"
+    echo ""
+    echo "[Network]"
+    echo "Address=$STATIC_IP/$CIDR"
+    if [[ -n "$SERVER_GATEWAY" ]]; then echo "Gateway=$SERVER_GATEWAY"; fi
+    echo "ConfigureWithoutCarrier=yes"
+  } > /etc/systemd/network/10-nfssvr.network
+  systemctl enable systemd-networkd
+  echo "✓ Static $STATIC_IP/$CIDR on $IFACE via systemd-networkd"
 fi
 
 echo "Post-installation setup complete!"
