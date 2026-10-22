@@ -66,19 +66,21 @@ d-i grub-installer/with_other_os boolean true
 
 # Pick the target disk (never the installer USB) and wipe stale signatures on it
 d-i preseed/early_command string \
-  sh /hd-media/select-disk.sh "${TARGET_DISK}"
+  sh /hd-media/select-disk.sh "${TARGET_DISK}"; \
+  cp /hd-media/post-install.sh /tmp/post-install.sh
 
 d-i finish-install/reboot_in_progress note
 
-# Late command: Run post-install setup script
-# Pass environment variables and execute the post-install script
+# Late command: run the post-install setup script inside the new system.
+# in-target runs in a chroot of /target, where the installer's /hd-media does not
+# exist, so copy the script in first. early_command stashed a copy in /tmp while
+# the USB was known to be mounted; fall back to /hd-media if that is missing.
+# The script's failure is returned so the installer reports it instead of hiding it.
 d-i preseed/late_command string \
-  in-target bash -c 'export NFS_EXPORT="${NFS_EXPORT}"; \
-    export NFS_SUBNET="${NFS_SUBNET}"; \
-    export STATIC_IP="${STATIC_IP}"; \
-    export NETMASK="${NETMASK}"; \
-    export GATEWAY="${GATEWAY}"; \
-    export NAMESERVERS="${NAMESERVERS}"; \
-    export DHCP_RANGE_START="${DHCP_RANGE_START}"; \
-    export DHCP_RANGE_END="${DHCP_RANGE_END}"; \
-    bash /hd-media/post-install.sh'
+  src=/tmp/post-install.sh; [ -f "$src" ] || src=/hd-media/post-install.sh; \
+  cp "$src" /target/root/post-install.sh && \
+  in-target env NFS_EXPORT="${NFS_EXPORT}" NFS_SUBNET="${NFS_SUBNET}" \
+    STATIC_IP="${STATIC_IP}" NETMASK="${NETMASK}" GATEWAY="${GATEWAY}" \
+    NAMESERVERS="${NAMESERVERS}" DHCP_RANGE_START="${DHCP_RANGE_START}" \
+    DHCP_RANGE_END="${DHCP_RANGE_END}" bash /root/post-install.sh; \
+  rc=$?; rm -f /target/root/post-install.sh; exit $rc
