@@ -68,18 +68,20 @@ Configuration
 - The script loads `.env` automatically if it exists
 - **Preseed templating:** `preseed.cfg.template` is automatically substituted with `.env` variables before being written to the USB
   - All hardcoded values (IP, hostname, timezone, NFS subnet, SSH key, etc.) are now configurable
-  - SSH public key is read from `SSH_KEY_FILE` and embedded in the preseed
+  - SSH public key is read from `SSH_KEY_FILE` (default: your ed25519, then RSA key) and installed for the new user by `post-install.sh`
   - User password hash must be set in `.env` before running (generate with `openssl passwd -6`, which prompts for the password)
 - **Post-install script:** `post-install.sh` handles NFS/DHCP setup after Debian installation
   - Much cleaner and more maintainable than inline preseed late_command chains
   - Can be tested independently before USB creation
-  - Dynamically detects network interface (more robust than grep)
-  - Includes error checking and proper logging
+  - Runs inside the installer chroot (copied in by `late_command`), so it enables services but starts them only on a booted system; they come up on first boot
+  - Uses the interface the installer configured statically; the static IP itself comes from the preseed `netcfg/*` settings (Debian uses ifupdown, not netplan)
 - Key variables: `STATIC_IP`, `TARGET_HOSTNAME`, `TARGET_USERNAME`, `TIMEZONE`, `NFS_SUBNET`, `DHCP_RANGE_START`/`END`, `SSH_KEY_FILE`, `USER_PASSWORD_HASH`, and more
 
 Download validation and verification
 
-- The script validates ISO and kernel downloads with checksums (when available)
+- The ISO is checked against Debian's `SHA256SUMS` and its GPG signature (Debian CD signing key); the hd-media kernel/initrd are checked against the installer `SHA256SUMS`
+- The hd-media kernel version must match the ISO's kernel, otherwise the installer can't find its modules (`ALLOW_KERNEL_MISMATCH=true` overrides)
+- Verification failures abort before anything is erased (`ALLOW_UNVERIFIED=true` skips an unreachable checksum/signature)
 - After USB creation, key files are verified: vmlinuz, initrd.gz, preseed.cfg, GRUB config, and bootloader
 - If verification fails, the script exits with an error
 
@@ -90,7 +92,7 @@ Troubleshooting
   - This project uses the hd-media kernel/initrd and passes `iso-scan/filename` and `iso-scan/ask=false`.
   - Some firmware/USB sticks need: add `modules=usb-storage,sd-mod,loop` to the kernel line.
   - Prefer a USB2 port on quirky hardware.
-- Keyboard prompt appears: the GRUB entry forces US; regenerate the USB if you changed it.
+- Keyboard prompt appears: the GRUB entry uses `LOCALE`/`KEYBOARD` from `.env`; regenerate the USB if you changed them.
 - Partitioning prompts: expected only if you trimmed `partman` lines in `preseed.cfg`.
 - Download failed after retries: check your internet connection and mirror accessibility.
 - Verification failed: the USB may have been disconnected or corrupted during setup.
@@ -101,3 +103,11 @@ Notes
 - The generated `preseed.cfg` is written only to the USB and is never committed to git
 - To update settings, edit `.env` and create a new USB — the preseed is regenerated each time
 - Password hash: generate with `openssl passwd -6` (prompts for the password, so it stays out of shell history) and set as `USER_PASSWORD_HASH='$6$...'` in `.env` (single quotes required)
+
+Important behaviour of the unattended install
+
+- **It erases the target machine's install disk without asking.** The GRUB entry auto-boots after 10 s. Set `TARGET_DISK` (e.g. `/dev/disk/by-id/...`) if the server has more than one disk; otherwise the first non-USB disk is used.
+- The server **powers off** when the install finishes (so it doesn't reboot into the still-inserted stick and reinstall). Remove the USB, then power it on.
+- The server needs working internet via the configured static IP/gateway during install (packages like `nfs-kernel-server` and `isc-dhcp-server` come from the mirror).
+- The GRUB on the stick is unsigned: **disable Secure Boot** on the target machine. Legacy BIOS boot is not supported (UEFI only).
+- The USB layout is: `vmlinuz`, `initrd.gz`, the ISO, `preseed.cfg`, `select-disk.sh`, `post-install.sh` at the top level (the installer mounts the stick at `/hd-media`).

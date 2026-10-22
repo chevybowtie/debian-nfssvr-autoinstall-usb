@@ -16,8 +16,9 @@ set -euo pipefail
 SECONDS=0
 
 # Detect original user if running under sudo
-ORIGINAL_USER="${SUDO_USER:-$USER}"
-ORIGINAL_HOME=$(eval echo ~"$ORIGINAL_USER")
+ORIGINAL_USER="${SUDO_USER:-${USER:-root}}"
+ORIGINAL_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
+ORIGINAL_HOME=${ORIGINAL_HOME:-/root}
 
 # Load .env configuration if it exists, otherwise use defaults
 if [[ -f .env ]]; then
@@ -317,16 +318,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Required tools
-for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid curl envsubst lsblk comm dd blockdev fsck.vfat sha256sum; do
-  command -v $cmd >/dev/null 2>&1 || { echo "Missing required tool: $cmd" >&2; exit 1; }
-done
-
 # Ensure running as root
 if [[ $EUID -ne 0 ]]; then
   echo "Run as root (sudo)." >&2
   exit 1
 fi
+
+# Required tools
+for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid curl envsubst lsblk comm dd blockdev fsck.vfat sha256sum; do
+  command -v $cmd >/dev/null 2>&1 || { echo "Missing required tool: $cmd" >&2; exit 1; }
+done
+
+# grub-install --target=x86_64-efi needs this; better to fail now than after erasing the USB
+[[ -d /usr/lib/grub/x86_64-efi ]] || die "GRUB EFI modules not found; install grub-efi-amd64-bin"
 
 if [[ -z $PROMPT_DEVICE ]]; then
   if [[ -n $USB_DEVICE ]]; then PROMPT_DEVICE=false; else PROMPT_DEVICE=true; fi
@@ -584,7 +588,7 @@ menuentry 'Automated Debian NFS/DHCP Install (ERASES THE TARGET DISK)' {
 EOF
 
 # Install GRUB (UEFI removable path)
-if $GRUB_VERBOSE; then set -x; fi
+if [[ $GRUB_VERBOSE == true ]]; then set -x; fi
 
 grub-install \
   --target=x86_64-efi \
@@ -593,17 +597,7 @@ grub-install \
   --removable \
   --no-nvram
 
-# Ensure fallback bootloader path exists
-if [[ -f "$MOUNT_USB/EFI/BOOT/BOOTX64.EFI" ]]; then
-  echo "UEFI fallback present." >/dev/null
-else
-  # Some distros place grubx64.efi under EFI/grub; copy if present
-  if [[ -f "$MOUNT_USB/EFI/grub/grubx64.efi" ]]; then
-    mkdir -p "$MOUNT_USB/EFI/BOOT"
-    cp "$MOUNT_USB/EFI/grub/grubx64.efi" "$MOUNT_USB/EFI/BOOT/BOOTX64.EFI"
-  fi
-fi
-
+# --removable writes EFI/BOOT/BOOTX64.EFI; verify_usb_contents checks for it below
 sync
 umount "$MOUNT_USB" || die "Failed to unmount $MOUNT_USB; do not remove the USB until it is unmounted"
 
@@ -612,5 +606,5 @@ verify_usb_contents "$USB_DEVICE" || exit 1
 
 elapsed=$SECONDS
 echo ""
-echo "✓ Done. USB ready. Time: $((elapsed/60))m $((elapsed%60))s)"
+echo "✓ Done. USB ready. Time: $((elapsed/60))m $((elapsed%60))s"
 echo "Boot target system with this USB (UEFI). The installer will find the ISO via iso-scan and run unattended."
