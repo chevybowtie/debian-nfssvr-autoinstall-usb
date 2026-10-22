@@ -34,7 +34,7 @@ DEBIAN_RELEASE="${DEBIAN_RELEASE:-trixie}"
 HDMEDIA_BASE="${HDMEDIA_BASE:-https://deb.debian.org/debian/dists/${DEBIAN_RELEASE}/main/installer-amd64/current/images/hd-media}"
 USB_DEVICE="${USB_DEVICE:-}"  # No default: pass --usb-device or let the script detect the inserted stick
 MOUNT_USB="${MOUNT_USB:-/mnt/usb}"
-SSH_KEY_FILE="${SSH_KEY_FILE:-$ORIGINAL_HOME/.ssh/id_rsa.pub}"
+SSH_KEY_FILE="${SSH_KEY_FILE:-}"  # Empty = auto-detect (ed25519 preferred)
 GRUB_VERBOSE="${GRUB_VERBOSE:-false}"
 PROMPT_DEVICE="${PROMPT_DEVICE:-}"  # empty = prompt only when no USB_DEVICE was given
 ALLOW_NON_USB="${ALLOW_NON_USB:-false}"
@@ -339,14 +339,13 @@ if [[ ! -f $PRESEED_TEMPLATE ]]; then
   exit 1
 fi
 
-# Validate and find SSH key
+# Find the first existing SSH public key, preferring ed25519
 find_ssh_key() {
   local candidates=(
-    "$SSH_KEY_FILE"
-    "$ORIGINAL_HOME/.ssh/id_rsa.pub"
     "$ORIGINAL_HOME/.ssh/id_ed25519.pub"
-    "/root/.ssh/id_rsa.pub"
+    "$ORIGINAL_HOME/.ssh/id_rsa.pub"
     "/root/.ssh/id_ed25519.pub"
+    "/root/.ssh/id_rsa.pub"
   )
 
   for key in "${candidates[@]}"; do
@@ -359,22 +358,30 @@ find_ssh_key() {
   return 1
 }
 
-if [[ -z $SSH_KEY_FILE ]] || [[ ! -f $SSH_KEY_FILE ]]; then
-  SSH_KEY_FILE=$(find_ssh_key)
+if [[ -n $SSH_KEY_FILE ]]; then
+  # An explicitly configured key must exist; don't silently fall back to another
+  [[ -f $SSH_KEY_FILE ]] || die "SSH_KEY_FILE '$SSH_KEY_FILE' does not exist"
+else
+  # '|| true': under set -e a failing lookup would otherwise exit before the message below
+  SSH_KEY_FILE=$(find_ssh_key || true)
   if [[ -z $SSH_KEY_FILE ]]; then
     echo "Error: No SSH public key found" >&2
     echo "Checked:" >&2
-    echo "  - $ORIGINAL_HOME/.ssh/id_rsa.pub" >&2
     echo "  - $ORIGINAL_HOME/.ssh/id_ed25519.pub" >&2
-    echo "  - /root/.ssh/id_rsa.pub" >&2
+    echo "  - $ORIGINAL_HOME/.ssh/id_rsa.pub" >&2
     echo "  - /root/.ssh/id_ed25519.pub" >&2
+    echo "  - /root/.ssh/id_rsa.pub" >&2
     echo "" >&2
-    echo "Generate a key with: ssh-keygen -t rsa -N '' -f ~/.ssh/id_rsa" >&2
+    echo "Generate a key with: ssh-keygen -t ed25519" >&2
     echo "Or set SSH_KEY_FILE in .env to use a custom key" >&2
     exit 1
   fi
   echo "Found SSH key: $SSH_KEY_FILE"
 fi
+
+# Use the first line only, and make sure it is a public key (not a private key)
+SSH_KEY_CONTENT=$(head -n1 "$SSH_KEY_FILE" | tr -d '\r\n')
+[[ $SSH_KEY_CONTENT =~ ^(ssh-|ecdsa-|sk-) ]] || die "$SSH_KEY_FILE does not look like an SSH public key"
 
 # Validate user password hash is set and looks like a crypt(3) hash
 if [[ ! $USER_PASSWORD_HASH =~ ^\$(6|5|y|2[aby])\$ ]]; then
@@ -481,9 +488,6 @@ cp "$ISO_FILE" "$MOUNT_USB/$ISO_FILE"
 
 # Template and place preseed in /hd-media
 mkdir -p "$MOUNT_USB/hd-media"
-
-# Read SSH key content (remove trailing newline)
-SSH_KEY_CONTENT=$(cat "$SSH_KEY_FILE" | tr -d '\n')
 
 # Variables substituted into the template (an explicit list keeps envsubst from
 # blanking any other $word that appears in the preseed)
