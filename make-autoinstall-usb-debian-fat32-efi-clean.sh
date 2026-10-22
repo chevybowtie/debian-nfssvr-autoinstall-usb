@@ -67,8 +67,10 @@ TARGET_HOSTNAME="${TARGET_HOSTNAME:-nfssvr}"  # not HOSTNAME: bash sets that to 
 DOMAIN="${DOMAIN:-local}"
 STATIC_IP="${STATIC_IP:-192.168.99.1}"
 NETMASK="${NETMASK:-255.255.255.0}"
-GATEWAY="${GATEWAY:-192.168.99.254}"
-NAMESERVERS="${NAMESERVERS:-8.8.8.8 1.1.1.1}"
+SERVER_GATEWAY="${SERVER_GATEWAY:-}"           # Server's own default route on the static link; empty for a direct cable
+NAMESERVERS="${NAMESERVERS:-8.8.8.8 1.1.1.1}"  # Only handed to DHCP clients if DHCP_SEND_DNS=true
+DHCP_SEND_GATEWAY="${DHCP_SEND_GATEWAY:-false}"  # true = DHCP clients get this server as their default route
+DHCP_SEND_DNS="${DHCP_SEND_DNS:-false}"
 TIMEZONE="${TIMEZONE:-America/Chicago}"
 LOCALE="${LOCALE:-en_US.UTF-8}"
 KEYBOARD="${KEYBOARD:-us}"
@@ -83,6 +85,14 @@ NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
 NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"
 DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
 DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
+
+if [[ -n ${GATEWAY:-} ]]; then
+  echo "Note: GATEWAY is no longer used. The installer now gets its address by DHCP; the" >&2
+  echo "      server's own default route is SERVER_GATEWAY (empty = none)." >&2
+fi
+for v in DHCP_SEND_GATEWAY DHCP_SEND_DNS; do
+  [[ ${!v} == true || ${!v} == false ]] || { echo "Error: $v must be 'true' or 'false' (got '${!v}')" >&2; exit 1; }
+done
 
 # Unmount the USB and remove our temp mount dir on any exit (error, Ctrl-C, success)
 cleanup() {
@@ -558,7 +568,8 @@ cp "$ISO_FILE" "$MOUNT_USB/$ISO_FILE"
 # Variables substituted into the template (an explicit list keeps envsubst from
 # blanking any other $word that appears in the preseed)
 TEMPLATE_VARS=(
-  TARGET_HOSTNAME DOMAIN STATIC_IP NETMASK GATEWAY NAMESERVERS
+  TARGET_HOSTNAME DOMAIN STATIC_IP NETMASK SERVER_GATEWAY NAMESERVERS
+  DHCP_SEND_GATEWAY DHCP_SEND_DNS
   TIMEZONE LOCALE KEYBOARD MIRROR_COUNTRY MIRROR_HOST MIRROR_PATH
   TARGET_USERNAME USER_FULLNAME USER_PASSWORD_HASH SSH_KEY_CONTENT TARGET_DISK
   NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END

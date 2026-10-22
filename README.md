@@ -2,10 +2,10 @@
 
 Create a UEFI-bootable USB that performs an unattended Debian install and comes up as a small backup appliance:
 
-- Static IP: `192.168.99.1/24`
+- Static IP: `192.168.99.1/24` (after the install; the install itself uses DHCP)
 - NFS export: `/srv/nfs`
-- Optional DHCP server: `192.168.99.10–20`
-- SSH enabled for user `backupadmin` (replace the key in `preseed.cfg`)
+- DHCP server for the connected PC: `192.168.99.10–20`
+- SSH enabled for user `backupadmin`, with your public key installed
 
 Status
 
@@ -43,18 +43,18 @@ Usage
 2) Write the USB (this will erase the device):
    - `sudo ./make-autoinstall-usb-debian-fat32-efi-clean.sh --usb-device /dev/sdX`
 3) Boot the target from this USB (UEFI) and choose:
-   - “Automated Debian NFS/DHCP Install”
+   - “Automated Debian NFS/DHCP Install (ERASES THE TARGET DISK)” (it also starts by itself after 10 s)
 
 Default behavior
 
 - Keyboard: preset to US (no prompt).
-- Networking during install: static `192.168.99.1/24` (as in `preseed.cfg`).
+- Networking during install: **DHCP** (plug the server into a normal router: it needs the internet to fetch packages). On the first boot after install it switches to the fixed `192.168.99.1/24`.
 - Disk partitioning: by default the preseed is set up to automatically wipe and use the first disk.
   - If you prefer being asked about partitioning, comment/remove the `partman-auto` lines in `preseed.cfg` (the ones that set method/recipe/confirm).
 - After first boot on the installed system:
   - NFS server exports `/srv/nfs` to `192.168.99.0/24`.
   - DHCP server (isc-dhcp-server) serves `192.168.99.10–20`.
-  - User `backupadmin` exists; SSH enabled. Replace the `authorized-keys` in `preseed.cfg`.
+  - User `backupadmin` exists; SSH enabled, with the key from `SSH_KEY_FILE` installed.
 
 Verify after install
 
@@ -108,6 +108,15 @@ Important behaviour of the unattended install
 
 - **It erases the target machine's install disk without asking.** The GRUB entry auto-boots after 10 s. Set `TARGET_DISK` (e.g. `/dev/disk/by-id/...`) if the server has more than one disk; otherwise the first non-USB disk is used.
 - The server **powers off** when the install finishes (so it doesn't reboot into the still-inserted stick and reinstall). Remove the USB, then power it on.
-- The server needs working internet via the configured static IP/gateway during install (packages like `nfs-kernel-server` and `isc-dhcp-server` come from the mirror).
+- The server needs working internet during install, via DHCP from your router (packages like `nfs-kernel-server` and `isc-dhcp-server` come from the mirror).
 - The GRUB on the stick is unsigned: **disable Secure Boot** on the target machine. Legacy BIOS boot is not supported (UEFI only).
 - The USB layout is: `vmlinuz`, `initrd.gz`, the ISO, `preseed.cfg`, `select-disk.sh`, `post-install.sh` at the top level (the installer mounts the stick at `/hd-media`).
+
+Using it as a portable NFS "drive"
+
+1. Install with the server plugged into your normal router (DHCP + internet). It powers off when done.
+2. Cable the server directly to the PC (no router), power it on, and set the PC's NIC to automatic/DHCP. The server hands it an address in `DHCP_RANGE_START`–`DHCP_RANGE_END`.
+3. On the PC: `sudo mount -t nfs 192.168.99.1:/srv/nfs /mnt/nfs`
+- By default the DHCP server does **not** hand out a default route or DNS (`DHCP_SEND_GATEWAY`/`DHCP_SEND_DNS=false`), so the PC's other connections keep working. Set them to `true` only if this server should act as a gateway.
+- The export is `no_root_squash` and `/srv/nfs` is owned by `nobody`, so non-root users on the PC may not be able to write. Adjust the export options or the directory permissions in `post-install.sh` to taste.
+- No authentication: keep it on the private cable.

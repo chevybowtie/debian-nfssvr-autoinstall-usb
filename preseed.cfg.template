@@ -7,16 +7,16 @@ d-i console-setup/ask_detect boolean false
 d-i console-setup/layoutcode string ${KEYBOARD}
 d-i keyboard-configuration/xkb-keymap select ${KEYBOARD}
 
-# Networking (static)
+# Networking: DHCP during install, because the installer needs the internet to
+# fetch packages. post-install.sh then switches the server to its fixed address
+# (${STATIC_IP}) for its real job as a DHCP/NFS server on a direct cable.
 d-i netcfg/choose_interface select auto
+d-i netcfg/link_wait_timeout string 30
+d-i netcfg/dhcp_timeout string 60
+# netcfg/hostname forces the name even if the DHCP server offers one
 d-i netcfg/get_hostname string ${TARGET_HOSTNAME}
+d-i netcfg/hostname string ${TARGET_HOSTNAME}
 d-i netcfg/get_domain string ${DOMAIN}
-d-i netcfg/disable_autoconfig boolean true
-d-i netcfg/get_ipaddress string ${STATIC_IP}
-d-i netcfg/get_netmask string ${NETMASK}
-d-i netcfg/get_gateway string ${GATEWAY}
-d-i netcfg/get_nameservers string ${NAMESERVERS}
-d-i netcfg/confirm_static boolean true
 
 # Mirror
 d-i mirror/country string ${MIRROR_COUNTRY}
@@ -90,7 +90,8 @@ d-i preseed/late_command string \
   cp "$src" /target/root/post-install.sh && \
   in-target env TARGET_USERNAME="${TARGET_USERNAME}" SSH_KEY="${SSH_KEY_CONTENT}" \
     NFS_EXPORT="${NFS_EXPORT}" NFS_SUBNET="${NFS_SUBNET}" \
-    STATIC_IP="${STATIC_IP}" NETMASK="${NETMASK}" GATEWAY="${GATEWAY}" \
-    NAMESERVERS="${NAMESERVERS}" DHCP_RANGE_START="${DHCP_RANGE_START}" \
+    STATIC_IP="${STATIC_IP}" NETMASK="${NETMASK}" SERVER_GATEWAY="${SERVER_GATEWAY}" \
+    NAMESERVERS="${NAMESERVERS}" DHCP_SEND_GATEWAY="${DHCP_SEND_GATEWAY}" \
+    DHCP_SEND_DNS="${DHCP_SEND_DNS}" DHCP_RANGE_START="${DHCP_RANGE_START}" \
     DHCP_RANGE_END="${DHCP_RANGE_END}" bash /root/post-install.sh; \
   rc=$?; rm -f /target/root/post-install.sh; exit $rc
