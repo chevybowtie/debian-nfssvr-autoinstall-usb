@@ -120,3 +120,11 @@ Using it as a portable NFS "drive"
 - By default the DHCP server does **not** hand out a default route or DNS (`DHCP_SEND_GATEWAY`/`DHCP_SEND_DNS=false`), so the PC's other connections keep working. Set them to `true` only if this server should act as a gateway.
 - The export uses `all_squash`: every user on the PC (root included) is mapped to `nobody:nogroup`, which owns `/srv/nfs`, so anyone on the PC can read and write. Files you copy in are owned by `nobody` and can't be `chown`ed from the client.
 - No authentication: keep it on the private cable.
+
+Slimming the install
+
+- The install skips Debian's `standard` task (exim4, man pages, bash-completion, dnsutils, ...). It installs the base system, `openssh-server`, `nfs-kernel-server`, `isc-dhcp-server` and `EXTRA_PACKAGES` (default `nano less`).
+- Opt-in, in `.env`:
+  - `INSTALL_RECOMMENDS=false`: skip apt "Recommends" (leaner; test an install before relying on it).
+  - `NFS_V4_ONLY=true`: serve NFSv4 only and mask `rpcbind`/`rpc-statd`. Clients must mount with `-t nfs4`.
+- Already the defaults, so no change needed: no unattended-upgrades, no system upgrade during install, and the installer cleans apt's package cache itself.

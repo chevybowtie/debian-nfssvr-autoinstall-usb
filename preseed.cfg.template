@@ -101,6 +101,7 @@ d-i preseed/late_command string \
     NFS_EXPORT="${NFS_EXPORT}" NFS_SUBNET="${NFS_SUBNET}" \
     STATIC_IP="${STATIC_IP}" NETMASK="${NETMASK}" SERVER_GATEWAY="${SERVER_GATEWAY}" \
     NAMESERVERS="${NAMESERVERS}" DHCP_SEND_GATEWAY="${DHCP_SEND_GATEWAY}" \
-    DHCP_SEND_DNS="${DHCP_SEND_DNS}" DHCP_RANGE_START="${DHCP_RANGE_START}" \
+    DHCP_SEND_DNS="${DHCP_SEND_DNS}" NFS_V4_ONLY="${NFS_V4_ONLY}" \
+    DHCP_RANGE_START="${DHCP_RANGE_START}" \
     DHCP_RANGE_END="${DHCP_RANGE_END}" bash /root/post-install.sh; \
   rc=$?; rm -f /target/root/post-install.sh; exit $rc

@@ -17,6 +17,7 @@ SERVER_GATEWAY="${SERVER_GATEWAY:-}"           # empty = no default route (direc
 NAMESERVERS="${NAMESERVERS:-8.8.8.8}"
 DHCP_SEND_GATEWAY="${DHCP_SEND_GATEWAY:-false}"  # true = tell clients to route via this server
 DHCP_SEND_DNS="${DHCP_SEND_DNS:-false}"          # true = hand NAMESERVERS to clients
+NFS_V4_ONLY="${NFS_V4_ONLY:-false}"              # true = serve NFSv4 only; no rpcbind/NFSv3
 DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
 DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
 
@@ -71,6 +72,16 @@ chmod 755 "$NFS_EXPORT"
 # the export, so any user on the connected PC can read and write. Files copied
 # in end up owned by nobody, and clients can't chown them.
 echo "$NFS_EXPORT $NFS_SUBNET(rw,sync,no_subtree_check,all_squash,anonuid=65534,anongid=65534)" > /etc/exports
+
+# Optional: NFSv4 only. Drops NFSv2/v3, so the rpcbind/statd helpers (and their open
+# ports) aren't needed. nfs-server only Wants= rpcbind, so masking it is safe.
+# Clients must use NFSv4 (mount -t nfs4 ...).
+if [[ "$NFS_V4_ONLY" == "true" ]]; then
+  mkdir -p /etc/nfs.conf.d
+  printf '[nfsd]\nvers2=n\nvers3=n\nvers4=y\n' > /etc/nfs.conf.d/10-v4only.conf
+  systemctl mask rpcbind.service rpcbind.socket rpc-statd.service
+  echo "✓ NFS limited to v4 (rpcbind and rpc-statd masked)"
+fi
 
 # Enable NFS; start it only on a booted system (no systemd in the installer chroot)
 systemctl enable nfs-server
