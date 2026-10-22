@@ -57,6 +57,10 @@ d-i partman/confirm_nooverwrite boolean true
 d-i partman/filter_mounted boolean true
 
 # Package selection
+# Install "Recommends" along with each package? false = leaner, but a package
+# may then lack an optional helper (set via INSTALL_RECOMMENDS in .env).
+d-i base-installer/install-recommends boolean ${INSTALL_RECOMMENDS}
+
 # No tasks: skip Debian's 'standard' bundle (exim4 mail server, man pages, bash-completion,
 # dnsutils, telnet, ...). A single-purpose box gets the base system plus what is listed here.
 d-i pkgsel/run_tasksel boolean false

@@ -81,6 +81,7 @@ TARGET_USERNAME="${TARGET_USERNAME:-backupadmin}"
 USER_FULLNAME="${USER_FULLNAME:-Backup Admin}"
 USER_PASSWORD_HASH="${USER_PASSWORD_HASH:-}"
 TARGET_DISK="${TARGET_DISK:-}"  # Disk to install onto, e.g. /dev/disk/by-id/...; empty = first non-USB disk
+INSTALL_RECOMMENDS="${INSTALL_RECOMMENDS:-true}"  # false = install without "Recommends" (leaner; test it)
 EXTRA_PACKAGES="${EXTRA_PACKAGES:-nano less}"  # Installed besides openssh-server, nfs-kernel-server, isc-dhcp-server
 NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
 NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"
@@ -91,7 +92,7 @@ if [[ -n ${GATEWAY:-} ]]; then
   echo "Note: GATEWAY is no longer used. The installer now gets its address by DHCP; the" >&2
   echo "      server's own default route is SERVER_GATEWAY (empty = none)." >&2
 fi
-for v in DHCP_SEND_GATEWAY DHCP_SEND_DNS; do
+for v in DHCP_SEND_GATEWAY DHCP_SEND_DNS INSTALL_RECOMMENDS; do
   [[ ${!v} == true || ${!v} == false ]] || { echo "Error: $v must be 'true' or 'false' (got '${!v}')" >&2; exit 1; }
 done
 
@@ -573,7 +574,7 @@ TEMPLATE_VARS=(
   DHCP_SEND_GATEWAY DHCP_SEND_DNS
   TIMEZONE LOCALE KEYBOARD MIRROR_COUNTRY MIRROR_HOST MIRROR_PATH
   TARGET_USERNAME USER_FULLNAME USER_PASSWORD_HASH SSH_KEY_CONTENT TARGET_DISK
-  NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END EXTRA_PACKAGES
+  NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END EXTRA_PACKAGES INSTALL_RECOMMENDS
 )
 export "${TEMPLATE_VARS[@]}"
 
