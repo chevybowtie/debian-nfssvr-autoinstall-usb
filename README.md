@@ -69,7 +69,7 @@ Configuration
 - **Preseed templating:** `preseed.cfg.template` is automatically substituted with `.env` variables before being written to the USB
   - All hardcoded values (IP, hostname, timezone, NFS subnet, SSH key, etc.) are now configurable
   - SSH public key is read from `SSH_KEY_FILE` and embedded in the preseed
-  - User password hash must be set in `.env` before running (generate with `openssl passwd -6`)
+  - User password hash must be set in `.env` before running (generate with `openssl passwd -6`, which prompts for the password)
 - **Post-install script:** `post-install.sh` handles NFS/DHCP setup after Debian installation
   - Much cleaner and more maintainable than inline preseed late_command chains
   - Can be tested independently before USB creation
@@ -100,4 +100,4 @@ Notes
 - All configuration (hostname, network, NFS, DHCP, SSH key, password) is templated from `.env` into `preseed.cfg.template`
 - The generated `preseed.cfg` is written only to the USB and is never committed to git
 - To update settings, edit `.env` and create a new USB — the preseed is regenerated each time
-- Password hash: generate with `echo -n 'your-password' | openssl passwd -6 -stdin` and set as `USER_PASSWORD_HASH` in `.env`
+- Password hash: generate with `openssl passwd -6` (prompts for the password, so it stays out of shell history) and set as `USER_PASSWORD_HASH='$6$...'` in `.env` (single quotes required)

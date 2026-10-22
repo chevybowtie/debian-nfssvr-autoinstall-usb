@@ -304,10 +304,11 @@ if [[ -z $SSH_KEY_FILE ]] || [[ ! -f $SSH_KEY_FILE ]]; then
   echo "Found SSH key: $SSH_KEY_FILE"
 fi
 
-# Validate user password hash is set
-if [[ -z $USER_PASSWORD_HASH ]]; then
-  echo "Error: USER_PASSWORD_HASH is not set in .env" >&2
-  echo "Generate a hash with: echo -n 'password' | openssl passwd -6 -stdin" >&2
+# Validate user password hash is set and looks like a crypt(3) hash
+if [[ ! $USER_PASSWORD_HASH =~ ^\$(6|5|y|2[aby])\$ ]]; then
+  echo "Error: USER_PASSWORD_HASH is missing or not a valid password hash in .env" >&2
+  echo "Generate one with: openssl passwd -6   (prompts for the password)" >&2
+  echo "Keep it in single quotes in .env, e.g. USER_PASSWORD_HASH='\$6\$salt\$...'" >&2
   exit 1
 fi
 
