@@ -412,9 +412,12 @@ else
   echo "Found SSH key: $SSH_KEY_FILE"
 fi
 
-# Use the first line only, and make sure it is a public key (not a private key)
-SSH_KEY_CONTENT=$(head -n1 "$SSH_KEY_FILE" | tr -d '\r\n')
-[[ $SSH_KEY_CONTENT =~ ^(ssh-|ecdsa-|sk-) ]] || die "$SSH_KEY_FILE does not look like an SSH public key"
+# Use the first line only, keep just "<type> <base64>" (the comment could hold
+# characters that break shell quoting in the preseed), and make sure it is a
+# public key and not a private key
+SSH_KEY_CONTENT=$(head -n1 "$SSH_KEY_FILE" | tr -d '\r' | awk '{print $1 " " $2}')
+[[ $SSH_KEY_CONTENT =~ ^(ssh-|ecdsa-|sk-)[A-Za-z0-9@.-]+\ [A-Za-z0-9+/=]+$ ]] \
+  || die "$SSH_KEY_FILE does not look like an SSH public key"
 
 # Validate user password hash is set and looks like a crypt(3) hash
 if [[ ! $USER_PASSWORD_HASH =~ ^\$(6|5|y|2[aby])\$ ]]; then

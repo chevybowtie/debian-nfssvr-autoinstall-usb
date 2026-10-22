@@ -19,6 +19,22 @@ DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
 
 echo "Starting post-installation setup..."
 
+# ===== SSH key =====
+# d-i has no preseed question for authorized keys, so install it here.
+if [[ -n "${SSH_KEY:-}" && -n "${TARGET_USERNAME:-}" ]]; then
+  user_home=$(getent passwd "$TARGET_USERNAME" | cut -d: -f6)
+  if [[ -n "$user_home" && -d "$user_home" ]]; then
+    install -d -m 700 -o "$TARGET_USERNAME" -g "$TARGET_USERNAME" "$user_home/.ssh"
+    touch "$user_home/.ssh/authorized_keys"
+    grep -qxF "$SSH_KEY" "$user_home/.ssh/authorized_keys" || echo "$SSH_KEY" >> "$user_home/.ssh/authorized_keys"
+    chown "$TARGET_USERNAME:$TARGET_USERNAME" "$user_home/.ssh/authorized_keys"
+    chmod 600 "$user_home/.ssh/authorized_keys"
+    echo "✓ SSH key installed for $TARGET_USERNAME"
+  else
+    echo "Warning: home directory for '$TARGET_USERNAME' not found; SSH key not installed" >&2
+  fi
+fi
+
 # True when systemd is actually running (false inside the installer chroot)
 systemd_running() { [[ -d /run/systemd/system ]]; }
 

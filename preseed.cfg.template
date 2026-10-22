@@ -33,7 +33,7 @@ d-i passwd/user-password-crypted password ${USER_PASSWORD_HASH}
 d-i user-setup/allow-password-weak boolean true
 d-i user-setup/allow-password-empty boolean false
 d-i user-setup/encrypt-home boolean false
-d-i user-setup/authorized-keys string ${SSH_KEY_CONTENT}
+# d-i has no question for SSH keys; post-install.sh installs the key for this user
 
 # Clock and timezone
 d-i clock-setup/utc boolean true
@@ -84,7 +84,8 @@ d-i finish-install/reboot_in_progress note
 d-i preseed/late_command string \
   src=/tmp/post-install.sh; [ -f "$src" ] || src=/hd-media/post-install.sh; \
   cp "$src" /target/root/post-install.sh && \
-  in-target env NFS_EXPORT="${NFS_EXPORT}" NFS_SUBNET="${NFS_SUBNET}" \
+  in-target env TARGET_USERNAME="${TARGET_USERNAME}" SSH_KEY="${SSH_KEY_CONTENT}" \
+    NFS_EXPORT="${NFS_EXPORT}" NFS_SUBNET="${NFS_SUBNET}" \
     STATIC_IP="${STATIC_IP}" NETMASK="${NETMASK}" GATEWAY="${GATEWAY}" \
     NAMESERVERS="${NAMESERVERS}" DHCP_RANGE_START="${DHCP_RANGE_START}" \
     DHCP_RANGE_END="${DHCP_RANGE_END}" bash /root/post-install.sh; \
