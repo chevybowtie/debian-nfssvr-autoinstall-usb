@@ -20,6 +20,11 @@ ORIGINAL_HOME=$(eval echo ~"$ORIGINAL_USER")
 
 # Load .env configuration if it exists, otherwise use defaults
 if [[ -f .env ]]; then
+  # HOSTNAME/USERNAME were renamed; the old names are shell-owned and would be ignored or wrong
+  if grep -qE '^(export +)?(HOSTNAME|USERNAME)=' .env; then
+    echo "Error: .env sets HOSTNAME/USERNAME; rename them to TARGET_HOSTNAME/TARGET_USERNAME" >&2
+    exit 1
+  fi
   set +u; source .env; set -u
 fi
 
@@ -36,7 +41,7 @@ ALLOW_NON_USB="${ALLOW_NON_USB:-false}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
 
 # Preseed template variables (with defaults)
-HOSTNAME="${HOSTNAME:-nfssvr}"
+TARGET_HOSTNAME="${TARGET_HOSTNAME:-nfssvr}"  # not HOSTNAME: bash sets that to this machine's name
 DOMAIN="${DOMAIN:-local}"
 STATIC_IP="${STATIC_IP:-192.168.99.1}"
 NETMASK="${NETMASK:-255.255.255.0}"
@@ -48,7 +53,7 @@ KEYBOARD="${KEYBOARD:-us}"
 MIRROR_COUNTRY="${MIRROR_COUNTRY:-US}"
 MIRROR_HOST="${MIRROR_HOST:-deb.debian.org}"
 MIRROR_PATH="${MIRROR_PATH:-/debian}"
-USERNAME="${USERNAME:-backupadmin}"
+TARGET_USERNAME="${TARGET_USERNAME:-backupadmin}"
 USER_FULLNAME="${USER_FULLNAME:-Backup Admin}"
 USER_PASSWORD_HASH="${USER_PASSWORD_HASH:-}"
 TARGET_DISK="${TARGET_DISK:-}"  # Disk to install onto, e.g. /dev/disk/by-id/...; empty = first non-USB disk
@@ -384,9 +389,9 @@ SSH_KEY_CONTENT=$(cat "$SSH_KEY_FILE" | tr -d '\n')
 # Variables substituted into the template (an explicit list keeps envsubst from
 # blanking any other $word that appears in the preseed)
 TEMPLATE_VARS=(
-  HOSTNAME DOMAIN STATIC_IP NETMASK GATEWAY NAMESERVERS
+  TARGET_HOSTNAME DOMAIN STATIC_IP NETMASK GATEWAY NAMESERVERS
   TIMEZONE LOCALE KEYBOARD MIRROR_COUNTRY MIRROR_HOST MIRROR_PATH
-  USERNAME USER_FULLNAME USER_PASSWORD_HASH SSH_KEY_CONTENT TARGET_DISK
+  TARGET_USERNAME USER_FULLNAME USER_PASSWORD_HASH SSH_KEY_CONTENT TARGET_DISK
   NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END
 )
 export "${TEMPLATE_VARS[@]}"

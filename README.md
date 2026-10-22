@@ -75,7 +75,7 @@ Configuration
   - Can be tested independently before USB creation
   - Dynamically detects network interface (more robust than grep)
   - Includes error checking and proper logging
-- Key variables: `STATIC_IP`, `HOSTNAME`, `TIMEZONE`, `NFS_SUBNET`, `DHCP_RANGE_START`/`END`, `SSH_KEY_FILE`, `USER_PASSWORD_HASH`, and more
+- Key variables: `STATIC_IP`, `TARGET_HOSTNAME`, `TARGET_USERNAME`, `TIMEZONE`, `NFS_SUBNET`, `DHCP_RANGE_START`/`END`, `SSH_KEY_FILE`, `USER_PASSWORD_HASH`, and more
 
 Download validation and verification
 

@@ -9,7 +9,7 @@ d-i keyboard-configuration/xkb-keymap select ${KEYBOARD}
 
 # Networking (static)
 d-i netcfg/choose_interface select auto
-d-i netcfg/get_hostname string ${HOSTNAME}
+d-i netcfg/get_hostname string ${TARGET_HOSTNAME}
 d-i netcfg/get_domain string ${DOMAIN}
 d-i netcfg/disable_autoconfig boolean true
 d-i netcfg/get_ipaddress string ${STATIC_IP}
@@ -28,7 +28,7 @@ d-i mirror/http/proxy string
 d-i passwd/root-login boolean false
 d-i passwd/make-user boolean true
 d-i passwd/user-fullname string ${USER_FULLNAME}
-d-i passwd/username string ${USERNAME}
+d-i passwd/username string ${TARGET_USERNAME}
 d-i passwd/user-password-crypted password ${USER_PASSWORD_HASH}
 d-i user-setup/allow-password-weak boolean true
 d-i user-setup/allow-password-empty boolean false
