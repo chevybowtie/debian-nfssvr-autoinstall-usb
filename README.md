@@ -109,7 +109,7 @@ Troubleshooting
 Notes
 
 - All configuration (hostname, network, NFS, DHCP, SSH key, password) is templated from `.env` into `preseed.cfg.template`
-- The rendered `preseed.cfg` is written only to the USB. (The `preseed.cfg` tracked in the repo root is an old leftover that the script does not use; it contains an outdated example password hash and should not be reused.)
+- The rendered `preseed.cfg` is written only to the USB and is never committed to git (it contains your password hash and SSH key)
 - To update settings, edit `.env` and create a new USB — the preseed is regenerated each time
 - Password hash: generate with `openssl passwd -6` (prompts for the password, so it stays out of shell history) and set as `USER_PASSWORD_HASH='$6$...'` in `.env` (single quotes required)
 
