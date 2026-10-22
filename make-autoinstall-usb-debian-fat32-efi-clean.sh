@@ -14,17 +14,167 @@ set -euo pipefail
 
 SECONDS=0
 
-# === CONFIGURABLE ===
-ISO_FILE="debian-12.11.0-amd64-netinst.iso"
-# hd-media kernel/initrd (matches Debian 12/bookworm installer)
-HDMEDIA_BASE="https://deb.debian.org/debian/dists/bookworm/main/installer-amd64/current/images/hd-media"
-USB_DEVICE="/dev/sdb"   # override with --usb-device /dev/sdX
-MOUNT_USB="/mnt/usb"
-PRESEED_FILE="preseed.cfg"   # local preseed source
-GRUB_VERBOSE=false
-PROMPT_DEVICE=false
+# Detect original user if running under sudo
+ORIGINAL_USER="${SUDO_USER:-$USER}"
+ORIGINAL_HOME=$(eval echo ~"$ORIGINAL_USER")
+
+# Load .env configuration if it exists, otherwise use defaults
+if [[ -f .env ]]; then
+  set +u; source .env; set -u
+fi
+
+# === CONFIGURABLE (with defaults) ===
+ISO_FILE="${ISO_FILE:-}"  # Leave empty to auto-detect the current netinst ISO
+DEBIAN_RELEASE="${DEBIAN_RELEASE:-trixie}"
+HDMEDIA_BASE="${HDMEDIA_BASE:-https://deb.debian.org/debian/dists/${DEBIAN_RELEASE}/main/installer-amd64/current/images/hd-media}"
+USB_DEVICE="${USB_DEVICE:-/dev/sdb}"
+MOUNT_USB="${MOUNT_USB:-/mnt/usb}"
+SSH_KEY_FILE="${SSH_KEY_FILE:-$ORIGINAL_HOME/.ssh/id_rsa.pub}"
+GRUB_VERBOSE="${GRUB_VERBOSE:-false}"
+PROMPT_DEVICE="${PROMPT_DEVICE:-true}"
+MAX_RETRIES="${MAX_RETRIES:-3}"
+
+# Preseed template variables (with defaults)
+HOSTNAME="${HOSTNAME:-nfssvr}"
+DOMAIN="${DOMAIN:-local}"
+STATIC_IP="${STATIC_IP:-192.168.99.1}"
+NETMASK="${NETMASK:-255.255.255.0}"
+GATEWAY="${GATEWAY:-192.168.99.254}"
+NAMESERVERS="${NAMESERVERS:-8.8.8.8 1.1.1.1}"
+TIMEZONE="${TIMEZONE:-America/Chicago}"
+LOCALE="${LOCALE:-en_US.UTF-8}"
+KEYBOARD="${KEYBOARD:-us}"
+MIRROR_COUNTRY="${MIRROR_COUNTRY:-US}"
+MIRROR_HOST="${MIRROR_HOST:-deb.debian.org}"
+MIRROR_PATH="${MIRROR_PATH:-/debian}"
+USERNAME="${USERNAME:-backupadmin}"
+USER_FULLNAME="${USER_FULLNAME:-Backup Admin}"
+USER_PASSWORD_HASH="${USER_PASSWORD_HASH:-}"
+NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
+NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"
+DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
+DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
 
 usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose] [--prompt]"; exit 1; }
+
+# Download a file with retries
+download_with_retry() {
+  local url=$1
+  local output=$2
+  local attempt=1
+
+  while [[ $attempt -le $MAX_RETRIES ]]; do
+    echo "Downloading $output (attempt $attempt/$MAX_RETRIES)..."
+    echo "  URL: $url"
+
+    if command -v wget >/dev/null; then
+      if wget --timeout=30 -q -O "$output" "$url"; then
+        echo "  ✓ Downloaded successfully"
+        return 0
+      fi
+    else
+      if curl -L --max-time 30 -o "$output" "$url"; then
+        echo "  ✓ Downloaded successfully"
+        return 0
+      fi
+    fi
+
+    echo "  ✗ Download failed (attempt $attempt/$MAX_RETRIES)"
+    rm -f "$output"
+    ((attempt++))
+    [[ $attempt -le $MAX_RETRIES ]] && { echo "  Retrying in 2 seconds..."; sleep 2; }
+  done
+
+  echo "Failed to download $url after $MAX_RETRIES attempts" >&2
+  return 1
+}
+
+# Validate file checksum if available
+validate_checksum() {
+  local file=$1
+  local url_base=$2
+
+  # Try to fetch checksums from the source
+  local checksum_file="${file}.sha256"
+  local checksum_url="${url_base%/*}/SHA256SUMS"
+
+  echo "Validating checksum..."
+  if download_with_retry "$checksum_url" "$checksum_file" 2>&1 | grep -q "Downloaded\|exist"; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      if sha256sum -c "$checksum_file" 2>&1 | grep -q "$file.*OK"; then
+        echo "✓ Checksum verified for $file"
+        rm -f "$checksum_file"
+        return 0
+      else
+        echo "✗ Checksum mismatch for $file" >&2
+        rm -f "$checksum_file" "$file"
+        return 1
+      fi
+    else
+      echo "⚠ sha256sum not available; skipping validation"
+      rm -f "$checksum_file"
+      return 0
+    fi
+  else
+    echo "⚠ Checksums not available; skipping validation"
+    rm -f "$checksum_file"
+    return 0
+  fi
+}
+
+# Verify USB was created successfully
+verify_usb_contents() {
+  local usb_dev=$1
+  echo ""
+  echo "Verifying USB contents..."
+
+  # Remount USB for verification
+  mkdir -p "$MOUNT_USB"
+  if ! mount ${usb_dev}1 "$MOUNT_USB" 2>/dev/null; then
+    echo "⚠ Could not remount USB for verification (may be in use)" >&2
+    return 0
+  fi
+
+  local errors=0
+
+  # Check critical files
+  local required_files=(
+    "vmlinuz"
+    "initrd.gz"
+    "$ISO_FILE"
+    "hd-media/preseed.cfg"
+    "hd-media/post-install.sh"
+    "boot/grub/grub.cfg"
+    "EFI/BOOT/BOOTX64.EFI"
+  )
+
+  for file in "${required_files[@]}"; do
+    if [[ -f "$MOUNT_USB/$file" ]]; then
+      echo "✓ $file"
+    else
+      echo "✗ Missing: $file" >&2
+      ((errors++))
+    fi
+  done
+
+  # Verify filesystem integrity
+  if fsck.vfat -n "$usb_dev"1 &>/dev/null; then
+    echo "✓ Filesystem integrity OK"
+  else
+    echo "⚠ Filesystem check inconclusive (may still be OK)" >&2
+  fi
+
+  umount "$MOUNT_USB" 2>/dev/null || true
+
+  if [[ $errors -gt 0 ]]; then
+    echo ""
+    echo "✗ USB verification failed with $errors missing files" >&2
+    return 1
+  fi
+
+  echo "✓ USB verification successful"
+  return 0
+}
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -59,7 +209,7 @@ if $PROMPT_DEVICE; then
 fi
 
 # Required tools
-for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid rsync curl wget; do
+for cmd in parted mkfs.vfat grub-install mount umount udevadm partprobe mkdir wipefs blkid rsync curl wget envsubst; do
   command -v $cmd >/dev/null 2>&1 || { echo "Missing required tool: $cmd" >&2; exit 1; }
 done
 
@@ -69,14 +219,75 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
+# Validate preseed template exists
+PRESEED_TEMPLATE="preseed.cfg.template"
+if [[ ! -f $PRESEED_TEMPLATE ]]; then
+  echo "Error: preseed template '$PRESEED_TEMPLATE' not found" >&2
+  exit 1
+fi
+
+# Validate and find SSH key
+find_ssh_key() {
+  local candidates=(
+    "$SSH_KEY_FILE"
+    "$ORIGINAL_HOME/.ssh/id_rsa.pub"
+    "$ORIGINAL_HOME/.ssh/id_ed25519.pub"
+    "/root/.ssh/id_rsa.pub"
+    "/root/.ssh/id_ed25519.pub"
+  )
+
+  for key in "${candidates[@]}"; do
+    if [[ -f "$key" ]]; then
+      echo "$key"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if [[ -z $SSH_KEY_FILE ]] || [[ ! -f $SSH_KEY_FILE ]]; then
+  SSH_KEY_FILE=$(find_ssh_key)
+  if [[ -z $SSH_KEY_FILE ]]; then
+    echo "Error: No SSH public key found" >&2
+    echo "Checked:" >&2
+    echo "  - $ORIGINAL_HOME/.ssh/id_rsa.pub" >&2
+    echo "  - $ORIGINAL_HOME/.ssh/id_ed25519.pub" >&2
+    echo "  - /root/.ssh/id_rsa.pub" >&2
+    echo "  - /root/.ssh/id_ed25519.pub" >&2
+    echo "" >&2
+    echo "Generate a key with: ssh-keygen -t rsa -N '' -f ~/.ssh/id_rsa" >&2
+    echo "Or set SSH_KEY_FILE in .env to use a custom key" >&2
+    exit 1
+  fi
+  echo "Found SSH key: $SSH_KEY_FILE"
+fi
+
+# Validate user password hash is set
+if [[ -z $USER_PASSWORD_HASH ]]; then
+  echo "Error: USER_PASSWORD_HASH is not set in .env" >&2
+  echo "Generate a hash with: echo -n 'password' | openssl passwd -6 -stdin" >&2
+  exit 1
+fi
+
+# Auto-detect the current netinst ISO name (old point releases are removed from mirrors)
+if [[ -z $ISO_FILE ]]; then
+  ISO_FILE=$(curl -fsSL "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/" \
+    | grep -o 'debian-[0-9.]*-amd64-netinst\.iso' | sort -uV | tail -n1) || true
+  if [[ -z $ISO_FILE ]]; then
+    echo "Error: could not detect current Debian netinst ISO name; set ISO_FILE in .env" >&2
+    exit 1
+  fi
+  echo "Detected current ISO: $ISO_FILE"
+fi
+
 # Obtain netinst ISO if absent (untouched file, copied to USB root)
 if [[ ! -f $ISO_FILE ]]; then
-  echo "Downloading $ISO_FILE ..."
-  if command -v wget >/dev/null; then
-    wget -O "$ISO_FILE" "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/$ISO_FILE"
-  else
-    curl -L -o "$ISO_FILE" "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/$ISO_FILE"
-  fi
+  ISO_URL="https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/$ISO_FILE"
+  download_with_retry "$ISO_URL" "$ISO_FILE" || exit 1
+  validate_checksum "$ISO_FILE" "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/" || exit 1
+else
+  echo "Using existing ISO: $ISO_FILE"
 fi
 
 read -rp "This will ERASE ALL DATA on $USB_DEVICE. Continue? (yes/NO) " confirm
@@ -113,20 +324,34 @@ mount ${USB_DEVICE}1 "$MOUNT_USB"
 
 # Fetch hd-media kernel and initrd directly to USB
 echo "Downloading hd-media kernel and initrd..."
-if command -v wget >/dev/null; then
-  wget -O "$MOUNT_USB/vmlinuz" "$HDMEDIA_BASE/vmlinuz"
-  wget -O "$MOUNT_USB/initrd.gz" "$HDMEDIA_BASE/initrd.gz"
-else
-  curl -L -o "$MOUNT_USB/vmlinuz" "$HDMEDIA_BASE/vmlinuz"
-  curl -L -o "$MOUNT_USB/initrd.gz" "$HDMEDIA_BASE/initrd.gz"
-fi
+download_with_retry "$HDMEDIA_BASE/vmlinuz" "$MOUNT_USB/vmlinuz" || exit 1
+download_with_retry "$HDMEDIA_BASE/initrd.gz" "$MOUNT_USB/initrd.gz" || exit 1
 
 # Copy whole ISO to root (untouched) so iso-scan can find it
 cp "$ISO_FILE" "$MOUNT_USB/$ISO_FILE"
 
-# Place preseed in /hd-media (installer will mount the USB and we point preseed/file there)
+# Template and place preseed in /hd-media
 mkdir -p "$MOUNT_USB/hd-media"
-cp "$PRESEED_FILE" "$MOUNT_USB/hd-media/preseed.cfg"
+
+# Read SSH key content (remove trailing newline)
+SSH_KEY_CONTENT=$(cat "$SSH_KEY_FILE" | tr -d '\n')
+
+# Ensure all variables are exported for envsubst
+export HOSTNAME DOMAIN STATIC_IP NETMASK GATEWAY NAMESERVERS
+export TIMEZONE LOCALE KEYBOARD MIRROR_COUNTRY MIRROR_HOST MIRROR_PATH
+export USERNAME USER_FULLNAME NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END
+export USER_PASSWORD_HASH SSH_KEY_CONTENT
+
+# Template preseed.cfg and write to USB
+envsubst < "$PRESEED_TEMPLATE" > "$MOUNT_USB/hd-media/preseed.cfg"
+
+# Copy post-install script to USB (called from preseed late_command)
+if [[ -f post-install.sh ]]; then
+  cp post-install.sh "$MOUNT_USB/hd-media/post-install.sh"
+  chmod +x "$MOUNT_USB/hd-media/post-install.sh"
+else
+  echo "Warning: post-install.sh not found; NFS/DHCP setup may fail" >&2
+fi
 
 # Create minimal GRUB config
 mkdir -p "$MOUNT_USB/boot/grub"
@@ -175,6 +400,10 @@ fi
 sync
 umount "$MOUNT_USB" || true
 
+# Verify USB contents
+verify_usb_contents "$USB_DEVICE" || exit 1
+
 elapsed=$SECONDS
-echo "Done. USB ready. Time: $((elapsed/60))m $((elapsed%60))s)"
+echo ""
+echo "✓ Done. USB ready. Time: $((elapsed/60))m $((elapsed%60))s)"
 echo "Boot target system with this USB (UEFI). The installer will find the ISO via iso-scan and run unattended."

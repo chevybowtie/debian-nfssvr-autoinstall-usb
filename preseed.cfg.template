@@ -1,0 +1,85 @@
+# Debian Preseed for unattended NFS + DHCP server install (hd-media method)
+# This is a template file; variables are substituted from .env before USB creation
+
+# Locale / keyboard
+d-i debian-installer/locale string ${LOCALE}
+d-i console-setup/ask_detect boolean false
+d-i console-setup/layoutcode string ${KEYBOARD}
+d-i keyboard-configuration/xkb-keymap select ${KEYBOARD}
+
+# Networking (static)
+d-i netcfg/choose_interface select auto
+d-i netcfg/get_hostname string ${HOSTNAME}
+d-i netcfg/get_domain string ${DOMAIN}
+d-i netcfg/disable_autoconfig boolean true
+d-i netcfg/get_ipaddress string ${STATIC_IP}
+d-i netcfg/get_netmask string ${NETMASK}
+d-i netcfg/get_gateway string ${GATEWAY}
+d-i netcfg/get_nameservers string ${NAMESERVERS}
+d-i netcfg/confirm_static boolean true
+
+# Mirror
+d-i mirror/country string ${MIRROR_COUNTRY}
+d-i mirror/http/hostname string ${MIRROR_HOST}
+d-i mirror/http/directory string ${MIRROR_PATH}
+d-i mirror/http/proxy string
+
+# Account setup
+d-i passwd/root-login boolean false
+d-i passwd/make-user boolean true
+d-i passwd/user-fullname string ${USER_FULLNAME}
+d-i passwd/username string ${USERNAME}
+d-i passwd/user-password-crypted password ${USER_PASSWORD_HASH}
+d-i user-setup/allow-password-weak boolean true
+d-i user-setup/allow-password-empty boolean false
+d-i user-setup/encrypt-home boolean false
+d-i user-setup/authorized-keys string ${SSH_KEY_CONTENT}
+
+# Clock and timezone
+d-i clock-setup/utc boolean true
+d-i time/zone string ${TIMEZONE}
+d-i clock-setup/ntp boolean true
+
+# Partitioning
+d-i partman-auto/method string regular
+d-i partman-auto/choose_recipe select atomic
+d-i partman-auto/disk string $(list-devices disk | head -n1)
+d-i partman-lvm/device_remove_lvm boolean true
+d-i partman-md/device_remove_md boolean true
+d-i partman-auto-lvm/guided_size string max
+d-i partman-auto/purge_lvm_from_device boolean true
+d-i partman-auto/confirm boolean true
+d-i partman/confirm_write_new_label boolean true
+d-i partman/initialize_disk_label boolean true
+d-i partman/choose_partition select finish
+d-i partman/confirm boolean true
+d-i partman/confirm_nooverwrite boolean true
+d-i partman/filter_mounted boolean true
+
+# Package selection
+tasksel tasksel/first multiselect standard
+d-i pkgsel/include string openssh-server nfs-kernel-server isc-dhcp-server
+d-i pkgsel/upgrade select none
+
+# Boot loader
+d-i grub-installer/with_other_os boolean true
+d-i grub-installer/bootdev string $(list-devices disk | head -n1)
+
+# Early wipe
+d-i preseed/early_command string \
+  dd if=/dev/zero of=$(list-devices disk | head -n1) bs=1M count=8 || true
+
+d-i finish-install/reboot_in_progress note
+
+# Late command: Run post-install setup script
+# Pass environment variables and execute the post-install script
+d-i preseed/late_command string \
+  in-target bash -c 'export NFS_EXPORT="${NFS_EXPORT}"; \
+    export NFS_SUBNET="${NFS_SUBNET}"; \
+    export STATIC_IP="${STATIC_IP}"; \
+    export NETMASK="${NETMASK}"; \
+    export GATEWAY="${GATEWAY}"; \
+    export NAMESERVERS="${NAMESERVERS}"; \
+    export DHCP_RANGE_START="${DHCP_RANGE_START}"; \
+    export DHCP_RANGE_END="${DHCP_RANGE_END}"; \
+    bash /hd-media/post-install.sh'
