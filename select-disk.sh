@@ -1,5 +1,5 @@
 #!/bin/sh
-# Choose the install target disk for the preseed (runs from preseed/early_command).
+# Choose the install target disk for the preseed (runs from partman/early_command, just before partitioning).
 # Usage: select-disk.sh [TARGET_DISK]
 # An explicit TARGET_DISK wins. Otherwise pick the first disk that is neither
 # USB-attached nor the device the installer media was loaded from, so the

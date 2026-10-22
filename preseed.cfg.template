@@ -43,7 +43,7 @@ d-i clock-setup/ntp boolean true
 # Partitioning
 d-i partman-auto/method string regular
 d-i partman-auto/choose_recipe select atomic
-# partman-auto/disk and grub-installer/bootdev are set by select-disk.sh (early_command)
+# partman-auto/disk and grub-installer/bootdev are set by select-disk.sh (partman/early_command)
 d-i partman-lvm/device_remove_lvm boolean true
 d-i partman-md/device_remove_md boolean true
 d-i partman-auto-lvm/guided_size string max
@@ -64,10 +64,15 @@ d-i pkgsel/upgrade select none
 # Boot loader
 d-i grub-installer/with_other_os boolean true
 
-# Pick the target disk (never the installer USB) and wipe stale signatures on it
+# Stash post-install.sh in the installer's /tmp while the stick is known to be mounted
 d-i preseed/early_command string \
-  sh /hd-media/select-disk.sh "${TARGET_DISK}"; \
   cp /hd-media/post-install.sh /tmp/post-install.sh
+
+# Pick the target disk (never the installer USB) and wipe stale signatures on it.
+# partman/early_command runs just before the partitioner; disks may not be
+# visible yet when preseed/early_command runs.
+d-i partman/early_command string \
+  sh /hd-media/select-disk.sh "${TARGET_DISK}"
 
 d-i finish-install/reboot_in_progress note
 
