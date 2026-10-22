@@ -39,6 +39,7 @@ GRUB_VERBOSE="${GRUB_VERBOSE:-false}"
 PROMPT_DEVICE="${PROMPT_DEVICE:-}"  # empty = prompt only when no USB_DEVICE was given
 ALLOW_NON_USB="${ALLOW_NON_USB:-false}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
+ALLOW_KERNEL_MISMATCH="${ALLOW_KERNEL_MISMATCH:-false}"  # true = continue if hd-media kernel != ISO kernel
 ALLOW_UNVERIFIED="${ALLOW_UNVERIFIED:-false}"  # true = continue if checksums/signatures cannot be verified
 DEBIAN_CD_KEY_FPR="${DEBIAN_CD_KEY_FPR:-DF9B9C49EAA9298432589D76DA87E80D6294BE9B}"  # Debian CD signing key
 
@@ -176,6 +177,25 @@ verify_sha256() {
   _verify_sha256 "$tmp" "$1" "$2" "${3:-$(basename "$1")}" "${4:-signed}" || rc=$?
   rm -rf "$tmp"
   return $rc
+}
+
+# Kernel version string ("6.12.107+deb13-amd64") of a Linux bzImage
+kernel_version() {
+  file -b "$1" | grep -o 'version [^ ]*' | head -n1 | cut -d' ' -f2
+}
+
+# Kernel version of the ISO's own installer (/install.amd/vmlinuz); empty if undeterminable
+iso_kernel_version() {
+  local iso=$1 tmp ver=""
+  tmp=$(mktemp -d)
+  if command -v xorriso >/dev/null 2>&1; then
+    xorriso -osirrox on -indev "$iso" -extract /install.amd/vmlinuz "$tmp/vmlinuz" >/dev/null 2>&1 || true
+  elif command -v 7z >/dev/null 2>&1; then
+    7z e -so "$iso" install.amd/vmlinuz > "$tmp/vmlinuz" 2>/dev/null || true
+  fi
+  [[ -s $tmp/vmlinuz ]] && ver=$(kernel_version "$tmp/vmlinuz")
+  rm -rf "$tmp"
+  echo "$ver"
 }
 
 # Verify USB was created successfully
@@ -387,6 +407,36 @@ else
   verify_sha256 "$ISO_FILE" "$ISO_BASE_URL" || { echo "Delete $ISO_FILE to download a fresh copy." >&2; exit 1; }
 fi
 
+# Fetch the hd-media kernel and initrd now, so a bad download or a kernel/ISO
+# mismatch is caught before the USB is erased.
+HDMEDIA_CACHE="cache/hd-media"
+mkdir -p "$HDMEDIA_CACHE"
+echo "Downloading hd-media kernel and initrd..."
+for f in vmlinuz initrd.gz; do
+  download_with_retry "$HDMEDIA_BASE/$f" "$HDMEDIA_CACHE/$f" noresume || exit 1
+  # The installer SHA256SUMS sits one level up and is not GPG-signed (HTTPS only)
+  verify_sha256 "$HDMEDIA_CACHE/$f" "${HDMEDIA_BASE%/*}" "${HDMEDIA_BASE##*/}/$f" unsigned || exit 1
+done
+
+# The ISO supplies the installer's kernel modules, so its kernel must match the
+# hd-media kernel or the installer fails with "no kernel modules were found".
+hd_kver=$(kernel_version "$HDMEDIA_CACHE/vmlinuz" || true)
+iso_kver=$(iso_kernel_version "$ISO_FILE" || true)
+if [[ -z $hd_kver || -z $iso_kver ]]; then
+  echo "⚠ Could not compare kernel versions (need file plus xorriso or 7z); skipping check" >&2
+elif [[ $hd_kver != "$iso_kver" ]]; then
+  echo "✗ Kernel mismatch: hd-media is $hd_kver but $ISO_FILE ships $iso_kver" >&2
+  echo "  The installer would not find matching kernel modules. Use an ISO and hd-media" >&2
+  echo "  files from the same installer build (pin HDMEDIA_BASE to a matching build" >&2
+  echo "  directory under .../installer-amd64/, or set ISO_FILE to a matching ISO)." >&2
+  if [[ $ALLOW_KERNEL_MISMATCH != true ]]; then
+    echo "  Set ALLOW_KERNEL_MISMATCH=true to continue anyway." >&2
+    exit 1
+  fi
+else
+  echo "✓ hd-media kernel matches ISO kernel ($hd_kver)"
+fi
+
 echo ""
 lsblk -o NAME,SIZE,MODEL,TRAN,FSTYPE,LABEL,MOUNTPOINT "$USB_DEVICE"
 echo ""
@@ -422,10 +472,9 @@ mkfs.vfat -F32 -n NFSSVR_BOOT "${USB_DEVICE}1"
 mkdir -p "$MOUNT_USB"
 mount ${USB_DEVICE}1 "$MOUNT_USB"
 
-# Fetch hd-media kernel and initrd directly to USB
-echo "Downloading hd-media kernel and initrd..."
-download_with_retry "$HDMEDIA_BASE/vmlinuz" "$MOUNT_USB/vmlinuz" || exit 1
-download_with_retry "$HDMEDIA_BASE/initrd.gz" "$MOUNT_USB/initrd.gz" || exit 1
+# Place the verified hd-media kernel and initrd on the USB
+cp "$HDMEDIA_CACHE/vmlinuz" "$MOUNT_USB/vmlinuz"
+cp "$HDMEDIA_CACHE/initrd.gz" "$MOUNT_USB/initrd.gz"
 
 # Copy whole ISO to root (untouched) so iso-scan can find it
 cp "$ISO_FILE" "$MOUNT_USB/$ISO_FILE"
