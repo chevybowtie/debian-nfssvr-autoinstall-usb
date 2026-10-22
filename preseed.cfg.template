@@ -43,7 +43,7 @@ d-i clock-setup/ntp boolean true
 # Partitioning
 d-i partman-auto/method string regular
 d-i partman-auto/choose_recipe select atomic
-d-i partman-auto/disk string $(list-devices disk | head -n1)
+# partman-auto/disk and grub-installer/bootdev are set by select-disk.sh (early_command)
 d-i partman-lvm/device_remove_lvm boolean true
 d-i partman-md/device_remove_md boolean true
 d-i partman-auto-lvm/guided_size string max
@@ -63,11 +63,10 @@ d-i pkgsel/upgrade select none
 
 # Boot loader
 d-i grub-installer/with_other_os boolean true
-d-i grub-installer/bootdev string $(list-devices disk | head -n1)
 
-# Early wipe
+# Pick the target disk (never the installer USB) and wipe stale signatures on it
 d-i preseed/early_command string \
-  dd if=/dev/zero of=$(list-devices disk | head -n1) bs=1M count=8 || true
+  sh /hd-media/select-disk.sh "${TARGET_DISK}"
 
 d-i finish-install/reboot_in_progress note
 

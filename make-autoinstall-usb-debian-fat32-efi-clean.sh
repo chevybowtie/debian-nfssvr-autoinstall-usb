@@ -51,6 +51,7 @@ MIRROR_PATH="${MIRROR_PATH:-/debian}"
 USERNAME="${USERNAME:-backupadmin}"
 USER_FULLNAME="${USER_FULLNAME:-Backup Admin}"
 USER_PASSWORD_HASH="${USER_PASSWORD_HASH:-}"
+TARGET_DISK="${TARGET_DISK:-}"  # Disk to install onto, e.g. /dev/disk/by-id/...; empty = first non-USB disk
 NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
 NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"
 DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
@@ -147,6 +148,7 @@ verify_usb_contents() {
     "$ISO_FILE"
     "hd-media/preseed.cfg"
     "hd-media/post-install.sh"
+    "hd-media/select-disk.sh"
     "boot/grub/grub.cfg"
     "EFI/BOOT/BOOTX64.EFI"
   )
@@ -378,14 +380,26 @@ mkdir -p "$MOUNT_USB/hd-media"
 # Read SSH key content (remove trailing newline)
 SSH_KEY_CONTENT=$(cat "$SSH_KEY_FILE" | tr -d '\n')
 
-# Ensure all variables are exported for envsubst
-export HOSTNAME DOMAIN STATIC_IP NETMASK GATEWAY NAMESERVERS
-export TIMEZONE LOCALE KEYBOARD MIRROR_COUNTRY MIRROR_HOST MIRROR_PATH
-export USERNAME USER_FULLNAME NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END
-export USER_PASSWORD_HASH SSH_KEY_CONTENT
+# Variables substituted into the template (an explicit list keeps envsubst from
+# blanking any other $word that appears in the preseed)
+TEMPLATE_VARS=(
+  HOSTNAME DOMAIN STATIC_IP NETMASK GATEWAY NAMESERVERS
+  TIMEZONE LOCALE KEYBOARD MIRROR_COUNTRY MIRROR_HOST MIRROR_PATH
+  USERNAME USER_FULLNAME USER_PASSWORD_HASH SSH_KEY_CONTENT TARGET_DISK
+  NFS_EXPORT NFS_SUBNET DHCP_RANGE_START DHCP_RANGE_END
+)
+export "${TEMPLATE_VARS[@]}"
 
 # Template preseed.cfg and write to USB
-envsubst < "$PRESEED_TEMPLATE" > "$MOUNT_USB/hd-media/preseed.cfg"
+envsubst "$(printf '${%s} ' "${TEMPLATE_VARS[@]}")" < "$PRESEED_TEMPLATE" > "$MOUNT_USB/hd-media/preseed.cfg"
+if grep -qE '\$\{[A-Za-z_]+\}' "$MOUNT_USB/hd-media/preseed.cfg"; then
+  echo "Error: unsubstituted variables remain in preseed.cfg:" >&2
+  grep -nE '\$\{[A-Za-z_]+\}' "$MOUNT_USB/hd-media/preseed.cfg" >&2
+  exit 1
+fi
+
+# Disk-selection helper (called from preseed early_command)
+cp select-disk.sh "$MOUNT_USB/hd-media/select-disk.sh"
 
 # Copy post-install script to USB (called from preseed late_command)
 if [[ -f post-install.sh ]]; then
