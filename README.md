@@ -118,5 +118,5 @@ Using it as a portable NFS "drive"
 2. Cable the server directly to the PC (no router), power it on, and set the PC's NIC to automatic/DHCP. The server hands it an address in `DHCP_RANGE_START`–`DHCP_RANGE_END`.
 3. On the PC: `sudo mount -t nfs 192.168.99.1:/srv/nfs /mnt/nfs`
 - By default the DHCP server does **not** hand out a default route or DNS (`DHCP_SEND_GATEWAY`/`DHCP_SEND_DNS=false`), so the PC's other connections keep working. Set them to `true` only if this server should act as a gateway.
-- The export is `no_root_squash` and `/srv/nfs` is owned by `nobody`, so non-root users on the PC may not be able to write. Adjust the export options or the directory permissions in `post-install.sh` to taste.
+- The export uses `all_squash`: every user on the PC (root included) is mapped to `nobody:nogroup`, which owns `/srv/nfs`, so anyone on the PC can read and write. Files you copy in are owned by `nobody` and can't be `chown`ed from the client.
 - No authentication: keep it on the private cable.

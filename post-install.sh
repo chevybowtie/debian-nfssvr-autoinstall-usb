@@ -64,9 +64,13 @@ echo "Using network interface: $IFACE"
 echo "Configuring NFS server..."
 mkdir -p "$NFS_EXPORT"
 chown nobody:nogroup "$NFS_EXPORT"
+chmod 755 "$NFS_EXPORT"
 
-# Write NFS exports (nfs-server reads /etc/exports when it starts)
-echo "$NFS_EXPORT $NFS_SUBNET(rw,sync,no_subtree_check,no_root_squash)" > /etc/exports
+# Write NFS exports (nfs-server reads /etc/exports when it starts).
+# all_squash maps every client user (root included) to nobody:nogroup, which owns
+# the export, so any user on the connected PC can read and write. Files copied
+# in end up owned by nobody, and clients can't chown them.
+echo "$NFS_EXPORT $NFS_SUBNET(rw,sync,no_subtree_check,all_squash,anonuid=65534,anongid=65534)" > /etc/exports
 
 # Enable NFS; start it only on a booted system (no systemd in the installer chroot)
 systemctl enable nfs-server
