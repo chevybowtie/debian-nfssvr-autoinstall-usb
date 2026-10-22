@@ -33,7 +33,8 @@ ISO_FILE="${ISO_FILE:-}"  # Leave empty to auto-detect the current netinst ISO
 DEBIAN_RELEASE="${DEBIAN_RELEASE:-trixie}"
 HDMEDIA_BASE="${HDMEDIA_BASE:-https://deb.debian.org/debian/dists/${DEBIAN_RELEASE}/main/installer-amd64/current/images/hd-media}"
 USB_DEVICE="${USB_DEVICE:-}"  # No default: pass --usb-device or let the script detect the inserted stick
-MOUNT_USB="${MOUNT_USB:-/mnt/usb}"
+MOUNT_USB="${MOUNT_USB:-}"  # Empty = private temp dir (created and removed by the script)
+MOUNT_USB_CREATED=false
 SSH_KEY_FILE="${SSH_KEY_FILE:-}"  # Empty = auto-detect (ed25519 preferred)
 GRUB_VERBOSE="${GRUB_VERBOSE:-false}"
 PROMPT_DEVICE="${PROMPT_DEVICE:-}"  # empty = prompt only when no USB_DEVICE was given
@@ -64,6 +65,21 @@ NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
 NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"
 DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
 DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
+
+# Unmount the USB and remove our temp mount dir on any exit (error, Ctrl-C, success)
+cleanup() {
+  local rc=$?
+  if [[ -n ${MOUNT_USB:-} ]] && mountpoint -q "$MOUNT_USB" 2>/dev/null; then
+    sync
+    umount "$MOUNT_USB" 2>/dev/null || echo "Warning: could not unmount $MOUNT_USB" >&2
+  fi
+  if [[ $MOUNT_USB_CREATED == true ]]; then
+    rmdir "$MOUNT_USB" 2>/dev/null || true
+  fi
+  return $rc
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose] [--prompt]"; exit 1; }
 
@@ -497,7 +513,12 @@ mkfs.vfat -F32 -n NFSSVR_BOOT "$USB_PART"
 udevadm settle
 unmount_partitions "$USB_DEVICE"
 
-mkdir -p "$MOUNT_USB"
+if [[ -z $MOUNT_USB ]]; then
+  MOUNT_USB=$(mktemp -d -t nfssvr-usb.XXXXXX)
+  MOUNT_USB_CREATED=true
+else
+  mkdir -p "$MOUNT_USB"
+fi
 mount "$USB_PART" "$MOUNT_USB"
 
 # Place the verified hd-media kernel and initrd on the USB
@@ -584,7 +605,7 @@ else
 fi
 
 sync
-umount "$MOUNT_USB" || true
+umount "$MOUNT_USB" || die "Failed to unmount $MOUNT_USB; do not remove the USB until it is unmounted"
 
 # Verify USB contents
 verify_usb_contents "$USB_DEVICE" || exit 1
