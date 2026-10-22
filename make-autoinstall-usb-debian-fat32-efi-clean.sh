@@ -20,14 +20,30 @@ ORIGINAL_USER="${SUDO_USER:-${USER:-root}}"
 ORIGINAL_HOME=$(getent passwd "$ORIGINAL_USER" | cut -d: -f6)
 ORIGINAL_HOME=${ORIGINAL_HOME:-/root}
 
-# Load .env configuration if it exists, otherwise use defaults
-if [[ -f .env ]]; then
+# Pick the config file: --env-file FILE (checked before parsing, since .env
+# supplies the defaults), else .env. sudo strips environment variables, so this
+# is a flag rather than a variable.
+ENV_FILE=.env
+args=("$@")
+for ((i = 0; i < ${#args[@]}; i++)); do
+  if [[ ${args[i]} == --env-file ]]; then
+    ENV_FILE=${args[i+1]:-}
+    if [[ ! -f $ENV_FILE ]]; then
+      echo "Error: --env-file '$ENV_FILE' not found" >&2
+      exit 1
+    fi
+  fi
+done
+
+# Load the config file if it exists, otherwise use defaults
+if [[ -f $ENV_FILE ]]; then
+  echo "Using config: $ENV_FILE"
   # HOSTNAME/USERNAME were renamed; the old names are shell-owned and would be ignored or wrong
-  if grep -qE '^(export +)?(HOSTNAME|USERNAME)=' .env; then
-    echo "Error: .env sets HOSTNAME/USERNAME; rename them to TARGET_HOSTNAME/TARGET_USERNAME" >&2
+  if grep -qE '^(export +)?(HOSTNAME|USERNAME)=' "$ENV_FILE"; then
+    echo "Error: $ENV_FILE sets HOSTNAME/USERNAME; rename them to TARGET_HOSTNAME/TARGET_USERNAME" >&2
     exit 1
   fi
-  set +u; source .env; set -u
+  set +u; source "$ENV_FILE"; set -u
 fi
 
 # === CONFIGURABLE (with defaults) ===
@@ -83,7 +99,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose] [--prompt]"; exit 1; }
+usage() { echo "Usage: $0 [--usb-device DEVICE] [--env-file FILE] [--grub-verbose] [--prompt]"; exit 1; }
 
 die() { echo "Error: $*" >&2; exit 1; }
 
@@ -311,6 +327,7 @@ check_target_device() {
 while [[ $# -gt 0 ]]; do
   case $1 in
     --usb-device) [[ $# -ge 2 ]] || usage; USB_DEVICE="$2"; PROMPT_DEVICE=false; shift 2;;
+    --env-file) [[ $# -ge 2 ]] || usage; shift 2;;  # handled before .env is loaded
     --grub-verbose) GRUB_VERBOSE=true; shift;;
     --prompt) PROMPT_DEVICE=true; shift;;
     -h|--help) usage;;
