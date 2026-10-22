@@ -28,7 +28,7 @@ The script `make-autoinstall-usb-debian-fat32-efi-clean.sh`:
 Requirements
 
 - Linux host, run as root (sudo).
-- Tools: `parted`, `grub-install` (grub-efi-amd64-bin), `mount`, `umount`, `udevadm`, `partprobe`, `wipefs`, `wget` or `curl`, `envsubst`.
+- Tools: `parted`, `grub-install` (grub-efi-amd64-bin), `mount`, `umount`, `udevadm`, `partprobe`, `wipefs`, `curl`, `lsblk`, `sha256sum`, `envsubst`.
 - A USB drive that can be erased.
 - Target system boots in UEFI mode.
 - SSH public key: auto-detected from your user's `~/.ssh/` (RSA or Ed25519), or set `SSH_KEY_FILE` in `.env`.

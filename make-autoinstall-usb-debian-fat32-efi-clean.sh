@@ -66,34 +66,45 @@ usage() { echo "Usage: $0 [--usb-device DEVICE] [--grub-verbose] [--prompt]"; ex
 
 die() { echo "Error: $*" >&2; exit 1; }
 
-# Download a file with retries
+# Download a file with retries. Resumes partial downloads unless a third
+# argument "noresume" is given (use that for small files that may change).
 download_with_retry() {
   local url=$1
   local output=$2
+  local mode=${3:-resume}
+  local part="$output.part"
   local attempt=1
+  local rc
+  local -a progress=(-sS)
+  [[ -t 2 ]] && progress=(--progress-bar)
+
+  [[ $mode == noresume ]] && rm -f "$part"
 
   while [[ $attempt -le $MAX_RETRIES ]]; do
     echo "Downloading $output (attempt $attempt/$MAX_RETRIES)..."
     echo "  URL: $url"
 
-    if command -v wget >/dev/null; then
-      if wget --timeout=30 -q -O "$output" "$url"; then
-        echo "  ✓ Downloaded successfully"
-        return 0
-      fi
-    else
-      if curl -L --max-time 30 -o "$output" "$url"; then
-        echo "  ✓ Downloaded successfully"
-        return 0
-      fi
+    # -f: fail on HTTP errors instead of saving the error page
+    # --connect-timeout/--speed-*: abort stalled transfers, but no cap on total time
+    rc=0
+    curl -fL "${progress[@]}" -C - \
+      --connect-timeout 30 --speed-limit 1000 --speed-time 30 \
+      -o "$part" "$url" || rc=$?
+
+    if [[ $rc -eq 0 ]]; then
+      mv -f "$part" "$output"
+      echo "  ✓ Downloaded successfully"
+      return 0
     fi
 
-    echo "  ✗ Download failed (attempt $attempt/$MAX_RETRIES)"
-    rm -f "$output"
+    echo "  ✗ Download failed (attempt $attempt/$MAX_RETRIES, curl exit $rc)" >&2
+    # 33 = server rejected the resume range; start over next time
+    [[ $rc -eq 33 ]] && rm -f "$part"
     ((attempt++))
     [[ $attempt -le $MAX_RETRIES ]] && { echo "  Retrying in 2 seconds..."; sleep 2; }
   done
 
+  rm -f "$part"
   echo "Failed to download $url after $MAX_RETRIES attempts" >&2
   return 1
 }
@@ -319,7 +330,7 @@ fi
 
 # Auto-detect the current netinst ISO name (old point releases are removed from mirrors)
 if [[ -z $ISO_FILE ]]; then
-  ISO_FILE=$(curl -fsSL "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/" \
+  ISO_FILE=$(curl -fsSL --connect-timeout 30 --max-time 60 "https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/" \
     | grep -o 'debian-[0-9.]*-amd64-netinst\.iso' | sort -uV | tail -n1) || true
   if [[ -z $ISO_FILE ]]; then
     echo "Error: could not detect current Debian netinst ISO name; set ISO_FILE in .env" >&2
