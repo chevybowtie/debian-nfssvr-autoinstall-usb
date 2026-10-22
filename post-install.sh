@@ -1,6 +1,8 @@
 #!/bin/bash
 # Post-installation setup for NFS/DHCP server
-# Runs in-target after Debian installation completes
+# Runs in-target (chroot of the new system) at the end of the Debian install, so
+# systemd is NOT running: services are enabled here and start on first boot.
+# When run on an already-booted system, services are also (re)started.
 # Called from preseed late_command with environment variables
 
 set -e
@@ -14,16 +16,20 @@ GATEWAY="${GATEWAY:-192.168.99.254}"
 NAMESERVERS="${NAMESERVERS:-8.8.8.8}"
 DHCP_RANGE_START="${DHCP_RANGE_START:-192.168.99.10}"
 DHCP_RANGE_END="${DHCP_RANGE_END:-192.168.99.20}"
-HOSTNAME_NET="${HOSTNAME_NET:-nfssvr}"
 
 echo "Starting post-installation setup..."
 
-# Detect primary network interface (exclude loopback and virtual interfaces)
+# True when systemd is actually running (false inside the installer chroot)
+systemd_running() { [[ -d /run/systemd/system ]]; }
+
+# Interface to serve DHCP on: the one d-i configured statically, else the first physical NIC
 detect_interface() {
-  local iface
-  iface=$(ip -o link show | grep -v "lo\|docker\|vir" | awk '{print $2}' | sed 's/:$//' | head -n1)
+  local iface n
+  iface=$(awk '$1=="iface" && $3=="inet" && $4=="static" {print $2; exit}' /etc/network/interfaces 2>/dev/null || true)
   if [[ -z "$iface" ]]; then
-    iface=$(ls /sys/class/net | grep -v "^lo$" | head -n1)
+    for n in /sys/class/net/*; do
+      if [[ -e "$n/device" ]]; then iface=${n##*/}; break; fi
+    done
   fi
   echo "$iface"
 }
@@ -40,14 +46,16 @@ echo "Configuring NFS server..."
 mkdir -p "$NFS_EXPORT"
 chown nobody:nogroup "$NFS_EXPORT"
 
-# Write NFS exports
+# Write NFS exports (nfs-server reads /etc/exports when it starts)
 echo "$NFS_EXPORT $NFS_SUBNET(rw,sync,no_subtree_check,no_root_squash)" > /etc/exports
-exportfs -a
 
-# Enable and start NFS
+# Enable NFS; start it only on a booted system (no systemd in the installer chroot)
 systemctl enable nfs-server
-systemctl start nfs-server
-echo "✓ NFS server configured and started"
+if systemd_running; then
+  exportfs -ra
+  systemctl restart nfs-server
+fi
+echo "✓ NFS server configured"
 
 # ===== DHCP Setup =====
 echo "Configuring DHCP server..."
@@ -66,12 +74,15 @@ for ((i=0; i<4; i++)); do
   fi
 done
 
+# dhcpd wants a comma-separated list: "8.8.8.8 1.1.1.1" -> "8.8.8.8, 1.1.1.1"
+NAMESERVERS_CSV=$(echo $NAMESERVERS | sed 's/  */, /g')
+
 # Write DHCP configuration
 cat > /etc/dhcp/dhcpd.conf <<EOF
 subnet $network_addr netmask $NETMASK {
   range $DHCP_RANGE_START $DHCP_RANGE_END;
   option routers $STATIC_IP;
-  option domain-name-servers $NAMESERVERS;
+  option domain-name-servers $NAMESERVERS_CSV;
   default-lease-time 600;
   max-lease-time 7200;
 }
@@ -80,46 +91,20 @@ EOF
 # Configure interface for DHCP server
 echo "INTERFACESv4=\"$IFACE\"" > /etc/default/isc-dhcp-server
 
-# Enable and start DHCP
+# Enable DHCP; start it only on a booted system
 systemctl enable isc-dhcp-server
-systemctl start isc-dhcp-server
-echo "✓ DHCP server configured and started"
+if systemd_running; then
+  systemctl restart isc-dhcp-server
+fi
+echo "✓ DHCP server configured"
 
-# ===== Netplan Static IP Setup =====
-echo "Configuring static IP via netplan..."
-
-# Convert netmask to CIDR notation
-netmask_to_cidr() {
-  local mask=$1
-  local binary=""
-  IFS='.' read -r -a octets <<< "$mask"
-  for octet in "${octets[@]}"; do
-    binary=$(printf "%08b" "$octet")$binary
-  done
-  echo "${binary//0/}" | wc -c
-  echo $(($(echo "${binary//0/}" | wc -c) - 1))
-}
-
-CIDR=$(netmask_to_cidr "$NETMASK")
-
-# Create netplan configuration
-mkdir -p /etc/netplan
-cat > /etc/netplan/01-nfssvr.yaml <<EOF
-network:
-  version: 2
-  ethernets:
-    $IFACE:
-      addresses:
-        - ${STATIC_IP}/${CIDR}
-      gateway4: $GATEWAY
-      nameservers:
-        addresses: [$(echo $NAMESERVERS | tr ' ' ',')]
-      dhcp4: false
-EOF
-
-# Generate and apply netplan
-netplan generate || true
-netplan apply || true
-echo "✓ Static IP configured via netplan"
+# ===== Static IP =====
+# Debian uses ifupdown, not netplan. The installer's netcfg (preseed
+# netcfg/get_ipaddress etc.) already wrote the static address to
+# /etc/network/interfaces, so nothing is configured here; just sanity-check it.
+if ! grep -qE "^iface +$IFACE +inet +static" /etc/network/interfaces 2>/dev/null; then
+  echo "Warning: no static config for $IFACE in /etc/network/interfaces;" >&2
+  echo "         the DHCP server needs $STATIC_IP on that interface." >&2
+fi
 
 echo "Post-installation setup complete!"
