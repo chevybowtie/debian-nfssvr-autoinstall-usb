@@ -137,3 +137,7 @@ Slimming the install
   - `INSTALL_RECOMMENDS=false`: skip apt "Recommends" (leaner; test an install before relying on it).
   - `NFS_V4_ONLY=true`: serve NFSv4 only and mask `rpcbind`/`rpc-statd`. Clients must mount with `-t nfs4`.
 - Already the defaults, so no change needed: no unattended-upgrades, no system upgrade during install, and the installer cleans apt's package cache itself.
+
+License
+
+MIT. See [LICENSE](LICENSE).
