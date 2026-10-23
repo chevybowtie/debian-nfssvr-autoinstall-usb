@@ -82,7 +82,7 @@ USER_FULLNAME="${USER_FULLNAME:-Backup Admin}"
 USER_PASSWORD_HASH="${USER_PASSWORD_HASH:-}"
 TARGET_DISK="${TARGET_DISK:-}"  # Disk to install onto, e.g. /dev/disk/by-id/...; empty = first non-USB disk
 INSTALL_RECOMMENDS="${INSTALL_RECOMMENDS:-true}"  # false = install without "Recommends" (leaner; test it)
-EXTRA_PACKAGES="${EXTRA_PACKAGES:-nano less}"  # Installed besides openssh-server, nfs-kernel-server, isc-dhcp-server
+EXTRA_PACKAGES="${EXTRA_PACKAGES:-nano less btop}"  # Installed besides openssh-server, nfs-kernel-server, isc-dhcp-server
 NFS_EXPORT="${NFS_EXPORT:-/srv/nfs}"
 NFS_V4_ONLY="${NFS_V4_ONLY:-false}"  # true = NFSv4 only (no rpcbind/NFSv3); clients need mount -t nfs4
 NFS_SUBNET="${NFS_SUBNET:-192.168.99.0/24}"

@@ -57,6 +57,7 @@ Default behavior
   - NFS server exports `/srv/nfs` to `192.168.99.0/24`.
   - DHCP server (isc-dhcp-server) serves `192.168.99.10–20`.
   - User `backupadmin` exists; SSH enabled, with the key from `SSH_KEY_FILE` installed.
+  - `btop` is installed and set to show only the CPU and network graphs (`shown_boxes = "cpu net"` in `~/.config/btop/btop.conf`, written for the login user, root and `/etc/skel`). Add `mem` and/or `proc` to that line to show more. It is only configured if `btop` is in `EXTRA_PACKAGES`, so an existing `.env` that sets `EXTRA_PACKAGES="nano less"` needs `btop` added.
   - A login message (`/etc/motd`, shown on the console and over SSH) reminds you how to connect a Linux client: the server address, the shared folder, the DHCP range, and the install/DHCP/mount/copy/unmount steps. It is built from your `.env` values, so addresses and the `nfs`/`nfs4` mount type are correct for your setup. Edit `/etc/motd` on the server to change it.
 
 Verify after install
@@ -134,7 +135,7 @@ Using it as a portable NFS "drive"
 
 Slimming the install
 
-- The install skips Debian's `standard` task (exim4, man pages, bash-completion, dnsutils, ...). It installs the base system, `openssh-server`, `nfs-kernel-server`, `isc-dhcp-server` and `EXTRA_PACKAGES` (default `nano less`).
+- The install skips Debian's `standard` task (exim4, man pages, bash-completion, dnsutils, ...). It installs the base system, `openssh-server`, `nfs-kernel-server`, `isc-dhcp-server` and `EXTRA_PACKAGES` (default `nano less btop`).
 - Opt-in, in `.env`:
   - `INSTALL_RECOMMENDS=false`: skip apt "Recommends" (leaner; test an install before relying on it).
   - `NFS_V4_ONLY=true`: serve NFSv4 only and mask `rpcbind`/`rpc-statd`. Clients must mount with `-t nfs4`.

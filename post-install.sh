@@ -201,6 +201,32 @@ else
   echo "✓ Static $STATIC_IP/$CIDR on $IFACE via systemd-networkd"
 fi
 
+# ===== btop =====
+# btop (a resource monitor) is installed via EXTRA_PACKAGES. Configure it to show only the
+# CPU and network graphs. btop reads only a per-user config (no system-wide file), so write
+# it for the login user, for root (sudo btop), and into /etc/skel for any user added later.
+if command -v btop >/dev/null 2>&1; then
+  btop_conf=$'#* Only the CPU and network graphs are shown. Add "mem" and/or "proc" to show more.\nshown_boxes = "cpu net"\n'
+  btop_homes=(/etc/skel /root)
+  if [[ -n "${TARGET_USERNAME:-}" ]]; then
+    user_home=$(getent passwd "$TARGET_USERNAME" | cut -d: -f6)
+    [[ -n "$user_home" && -d "$user_home" ]] && btop_homes+=("$user_home")
+  fi
+  for h in "${btop_homes[@]}"; do
+    mkdir -p "$h/.config/btop"
+    printf '%s' "$btop_conf" > "$h/.config/btop/btop.conf"
+    if [[ "$h" != /etc/skel && "$h" != /root && -n "${TARGET_USERNAME:-}" ]]; then
+      # Own the whole new tree, including ~/.config if we just created it
+      chown -R "$TARGET_USERNAME:$TARGET_USERNAME" "$h/.config"
+    fi
+  done
+  echo "✓ btop configured to show only CPU and network"
+  btop_note="
+  Live CPU and network graphs on this server:  btop"
+else
+  btop_note=""
+fi
+
 # ===== Login message (MOTD) =====
 # A reminder, shown at every login (console and SSH), of the bare minimum needed to
 # connect a Linux client. Built from this install's settings so the addresses are right.
@@ -250,7 +276,7 @@ ${v4_note}
   Trouble?   ping $STATIC_IP                    (from the client)
              sudo systemctl status nfs-server       (on this server;
              also isc-dhcp-server)
-  There is no password on the share: keep this server on a private cable.
+  There is no password on the share: keep this server on a private cable.${btop_note}
 -----------------------------------------------------------------------------
 
 EOF
