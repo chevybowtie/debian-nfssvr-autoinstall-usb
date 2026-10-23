@@ -201,4 +201,59 @@ else
   echo "✓ Static $STATIC_IP/$CIDR on $IFACE via systemd-networkd"
 fi
 
+# ===== Login message (MOTD) =====
+# A reminder, shown at every login (console and SSH), of the bare minimum needed to
+# connect a Linux client. Built from this install's settings so the addresses are right.
+if [[ "$NFS_V4_ONLY" == "true" ]]; then
+  mount_type="nfs4"
+  v4_note="
+  (This server speaks NFSv4 only, so the mount type must be nfs4.)
+"
+else
+  mount_type="nfs"
+  v4_note=""
+fi
+
+cat > /etc/motd <<EOF
+
+=============================================================================
+  NFS file server - how to connect a Linux client
+=============================================================================
+  This machine shares one folder over NFS and hands out IP addresses to the
+  PC that is cabled to it.
+
+    Server address  : $STATIC_IP
+    Shared folder   : $NFS_EXPORT
+                      (anyone on the link can read and write; files you copy
+                      in are owned by "nobody")
+    Addresses given : $DHCP_RANGE_START - $DHCP_RANGE_END
+${v4_note}
+  On the Linux client:
+
+   1. Install the NFS client tools while the client is still online:
+        Debian/Ubuntu : sudo apt install nfs-common
+        Fedora/RHEL   : sudo dnf install nfs-utils
+        Arch          : sudo pacman -S nfs-utils
+
+   2. Cable the client's Ethernet port straight to this server and set that
+      wired connection to "Automatic (DHCP)". Check the address with:
+        ip -4 -br a              (look for a ${STATIC_IP%.*}.x address)
+
+   3. Mount the share:
+        sudo mkdir -p /mnt/nfs
+        sudo mount -t $mount_type $STATIC_IP:$NFS_EXPORT /mnt/nfs
+
+   4. Copy files, then unmount before unplugging:
+        cp -r ~/files /mnt/nfs/
+        sudo umount /mnt/nfs
+
+  Trouble?   ping $STATIC_IP                    (from the client)
+             sudo systemctl status nfs-server       (on this server;
+             also isc-dhcp-server)
+  There is no password on the share: keep this server on a private cable.
+-----------------------------------------------------------------------------
+
+EOF
+echo "✓ Login message written to /etc/motd"
+
 echo "Post-installation setup complete!"
